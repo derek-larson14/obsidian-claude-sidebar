@@ -6714,6 +6714,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.resizeObserver = null;
     this.termHost = null;
     this.plugin = plugin;
+    this.escapeScope = null;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -6729,6 +6730,23 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.buildUI();
     this.initTerminal();
     this.startShell();
+    this.setupEscapeHandler();
+  }
+  setupEscapeHandler() {
+    // Use Obsidian's Scope API to intercept Escape at keymap level
+    // This works above DOM events and can override Obsidian's built-in handlers
+    this.escapeScope = new import_obsidian.Scope(this.app.scope);
+    this.escapeScope.register([], 'Escape', () => {
+      // Only intercept when terminal has focus
+      if (this.containerEl.contains(document.activeElement)) {
+        if (this.proc && !this.proc.killed) {
+          this.proc.stdin?.write('\x1b');
+        }
+        return false; // Block further handling by Obsidian
+      }
+      return true; // Let Obsidian handle it normally
+    });
+    this.app.keymap.pushScope(this.escapeScope);
   }
   async onClose() {
     this.dispose();
@@ -7091,6 +7109,10 @@ var TerminalView = class extends import_obsidian.ItemView {
   dispose() {
     this.resizeObserver?.disconnect();
     this.themeObserver?.disconnect();
+    if (this.escapeScope) {
+      this.app.keymap.popScope(this.escapeScope);
+      this.escapeScope = null;
+    }
     this.stopShell();
     this.term?.dispose();
     this.term = null;
@@ -7123,6 +7145,32 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         return false;
       }
     });
+    this.addCommand({
+      id: "toggle-claude-focus",
+      name: "Toggle Focus: Editor ↔ Claude",
+      callback: () => this.toggleFocus()
+    });
+  }
+  async toggleFocus() {
+    const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
+    if (activeView) {
+      // Currently in Claude, go to editor
+      const leaves = this.app.workspace.getLeavesOfType("markdown");
+      if (leaves.length > 0) {
+        this.app.workspace.setActiveLeaf(leaves[0], { focus: true });
+      }
+    } else {
+      // Currently in editor, go to Claude
+      const claudeLeaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+      if (claudeLeaves.length > 0) {
+        this.app.workspace.setActiveLeaf(claudeLeaves[0], { focus: true });
+        // Focus the terminal
+        const view = claudeLeaves[0].view;
+        if (view instanceof TerminalView && view.term) {
+          view.term.focus();
+        }
+      }
+    }
   }
   onunload() {
     // Don't detach leaves - Obsidian manages leaf lifecycle during plugin updates

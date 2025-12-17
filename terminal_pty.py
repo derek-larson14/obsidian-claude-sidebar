@@ -63,16 +63,18 @@ def main():
                     try:
                         data = os.read(stdin_fd, 16384)
                         if data:
-                            # Check for resize escape sequence: \x1b]RESIZE;cols;rows\x07
-                            if data.startswith(b'\x1b]RESIZE;'):
+                            # Check for resize escape sequence anywhere in data: \x1b]RESIZE;cols;rows\x07
+                            while b'\x1b]RESIZE;' in data:
+                                start = data.index(b'\x1b]RESIZE;')
                                 try:
-                                    end = data.index(b'\x07')
-                                    resize_data = data[9:end].decode()
+                                    end = data.index(b'\x07', start)
+                                    resize_data = data[start+9:end].decode()
                                     c, r = resize_data.split(';')
                                     set_size(fd, int(c), int(r))
-                                    data = data[end+1:]  # Rest of data after resize cmd
+                                    # Remove the resize command from data
+                                    data = data[:start] + data[end+1:]
                                 except (ValueError, IndexError):
-                                    pass
+                                    break
                             if data:
                                 os.write(fd, data)
                     except OSError:
