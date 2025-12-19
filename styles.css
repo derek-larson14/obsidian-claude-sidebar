@@ -1,20 +1,47 @@
 .vault-terminal {
 	height: 100%;
+	min-height: 0;
 	display: flex;
 	flex-direction: column;
+	padding: 8px 12px;
+	box-sizing: border-box;
+	background-color: var(--background-secondary);
+	overflow: hidden;
 }
 
 .vault-terminal-host {
 	flex: 1;
 	min-height: 0;
+	overflow: hidden;
+	position: relative;
+	background-color: var(--background-secondary);
+	overscroll-behavior: contain;
 }
 
 .vault-terminal-host .xterm {
 	height: 100%;
-	padding: 12px 16px;
-	box-sizing: border-box;
+	/* DO NOT add padding here - it breaks xterm canvas character positioning */
+	background-color: var(--background-secondary) !important;
+}
+
+.vault-terminal-host .xterm .xterm-screen {
+	background-color: var(--background-secondary) !important;
 }
 
 .vault-terminal-host .xterm-viewport {
 	overflow-y: auto !important;
+	background-color: var(--background-secondary) !important;
+	overscroll-behavior: contain;
+	scrollbar-gutter: stable;
+}
+
+/* Keep the hidden textarea from forcing page scroll on focus/tab */
+.vault-terminal-host .xterm .xterm-helper-textarea {
+	left: 0 !important;
+	top: 0 !important;
+	width: 1px !important;
+	height: 1px !important;
+	opacity: 0 !important;
+	overflow: hidden !important;
+	clip: rect(0 0 0 0) !important;
 }

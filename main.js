@@ -6715,6 +6715,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.termHost = null;
     this.plugin = plugin;
     this.escapeScope = null;
+    this.fitTimeout = null;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -7001,7 +7002,8 @@ var TerminalView = class extends import_obsidian.ItemView {
       cursorBlink: true,
       fontSize: 13,
       fontFamily: "Menlo, Monaco, 'Courier New', monospace",
-      theme: this.getThemeColors()
+      theme: this.getThemeColors(),
+      scrollback: 10000
     });
     this.fitAddon = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fitAddon);
@@ -7024,7 +7026,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     });
     this.fit();
-    this.resizeObserver = new ResizeObserver(() => this.fit());
+    this.resizeObserver = new ResizeObserver(() => this.debouncedFit());
     this.resizeObserver.observe(this.termHost);
     // Watch for theme changes
     this.themeObserver = new MutationObserver(() => this.updateTheme());
@@ -7037,6 +7039,15 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.fitAddon.fit();
     } catch (e) {
     }
+  }
+  debouncedFit() {
+    if (this.fitTimeout) {
+      clearTimeout(this.fitTimeout);
+    }
+    this.fitTimeout = setTimeout(() => {
+      this.fit();
+      this.fitTimeout = null;
+    }, 50);
   }
   startShell() {
     this.stopShell();
@@ -7109,6 +7120,10 @@ var TerminalView = class extends import_obsidian.ItemView {
   dispose() {
     this.resizeObserver?.disconnect();
     this.themeObserver?.disconnect();
+    if (this.fitTimeout) {
+      clearTimeout(this.fitTimeout);
+      this.fitTimeout = null;
+    }
     if (this.escapeScope) {
       this.app.keymap.popScope(this.escapeScope);
       this.escapeScope = null;
