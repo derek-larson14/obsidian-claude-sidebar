@@ -7009,14 +7009,25 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.loadAddon(this.fitAddon);
     this.term.open(this.termHost);
     this.term.attachCustomKeyEventHandler((ev) => {
-      // Shift+Enter: send Alt+Enter sequence (ESC + carriage return) for multi-line input
-      if (ev.key === 'Enter' && ev.shiftKey) {
-        if (ev.type === 'keydown') {
+      if (ev.type === 'keydown') {
+        // Cmd+Arrow: readline shortcuts for line navigation
+        if (ev.metaKey) {
+          if (ev.key === 'ArrowRight') {
+            this.proc?.stdin?.write('\x05'); // Ctrl+E = end of line
+            return false;
+          }
+          if (ev.key === 'ArrowLeft') {
+            this.proc?.stdin?.write('\x01'); // Ctrl+A = start of line
+            return false;
+          }
+        }
+        // Shift+Enter: send Alt+Enter for multi-line input
+        if (ev.key === 'Enter' && ev.shiftKey) {
           if (this.proc && !this.proc.killed) {
             this.proc.stdin?.write('\x1b\r');
           }
+          return false;
         }
-        return false;
       }
       return true;
     });

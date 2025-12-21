@@ -18,13 +18,6 @@ Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 
 ## Installation
 
-### From Community Plugins (Recommended)
-
-1. Open Obsidian Settings
-2. Go to Community Plugins → Browse
-3. Search for "Claude Sidebar"
-4. Click Install, then Enable
-
 ### Manual Installation
 
 1. Download `main.js`, `manifest.json`, `styles.css`, and `terminal_pty.py` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
@@ -32,13 +25,18 @@ Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 3. Copy the downloaded files into that folder
 4. Reload Obsidian and enable the plugin in Settings → Community Plugins
 
+### From Community Plugins
+
+Once approved, you'll be able to search for "Claude Sidebar" in Community Plugins → Browse.
+
 ## Usage
 
-- Click the bot icon (🤖) in the left ribbon to open Claude
+- Click the bot icon in the left ribbon to open Claude
 - Use Command Palette (`Cmd+P`) for:
   - **Open Claude Code** - Open or focus Claude panel
   - **New Claude Tab** - Open additional Claude instance
   - **Close Claude Tab** - Close current Claude tab (when focused)
+  - **Toggle Focus: Editor ↔ Claude** - Quick switch between editor and Claude
 - Press `Shift+Enter` for multi-line input
 - Set your own hotkeys in Settings → Hotkeys
 
