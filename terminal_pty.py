@@ -42,8 +42,9 @@ def main():
     old_flags = fcntl.fcntl(stdin_fd, fcntl.F_GETFL)
     fcntl.fcntl(stdin_fd, fcntl.F_SETFL, old_flags | os.O_NONBLOCK)
 
+    running = True
     try:
-        while True:
+        while running:
             try:
                 rlist, _, _ = select.select([fd, stdin_fd], [], [], 0.05)
             except select.error:
@@ -54,10 +55,12 @@ def main():
                     try:
                         data = os.read(fd, 16384)
                         if not data:
+                            running = False
                             break
                         os.write(sys.stdout.fileno(), data)
                         sys.stdout.flush()
                     except OSError:
+                        running = False
                         break
                 elif ready_fd == stdin_fd:
                     try:
