@@ -29,7 +29,7 @@ Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude 
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, `styles.css`, and `terminal_pty.py` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
 2. Create folder: `<your-vault>/.obsidian/plugins/claude-sidebar/`
 3. Copy the downloaded files into that folder
 4. Reload Obsidian and enable the plugin in Settings → Community Plugins
@@ -61,6 +61,14 @@ Once approved, you'll be able to search for "Claude Sidebar" in Community Plugin
 
 - [xterm.js](https://xtermjs.org/) for terminal emulation
 - Python's built-in `pty` module for pseudo-terminal support
+
+## Development
+
+The PTY script (`terminal_pty.py`) is embedded as base64 in `main.js` for Obsidian plugin directory compatibility. To rebuild after modifying the Python:
+
+```bash
+./build.sh
+```
 
 ## Contributing
 
