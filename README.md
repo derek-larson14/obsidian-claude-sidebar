@@ -38,6 +38,17 @@ Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude 
 
 Once approved, you'll be able to search for "Claude Sidebar" in Community Plugins → Browse.
 
+## Updating
+
+In your vault folder, run:
+```bash
+cd .obsidian/plugins/claude-sidebar
+curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js
+curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json
+```
+
+Then restart Obsidian or disable/re-enable the plugin.
+
 ## Usage
 
 - Click the bot icon in the left ribbon to open Claude
