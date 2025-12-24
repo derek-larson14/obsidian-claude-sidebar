@@ -85,7 +85,8 @@ def main():
                             if data:
                                 os.write(fd, data)
                     except OSError:
-                        pass
+                        running = False
+                        break
 
             # Check if child exited
             try:
