@@ -6721,7 +6721,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.pendingFit = false;
     this.viewportEl = null;
     this.viewportScrollHandler = null;
-    this.keyScrollGuardHandler = null;
     this.focusInHandler = null;
     this.focusOutHandler = null;
     this.stdoutDecoder = null;
@@ -7021,7 +7020,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
     this.setupViewportScrollTracking();
-    this.setupKeyScrollGuard();
     this.setupFocusTracking();
     this.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type === 'keydown') {
@@ -7108,35 +7106,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     };
     this.viewportEl.addEventListener("scroll", this.viewportScrollHandler, { passive: true });
     this.term.onScroll(() => this.updateScrollState());
-  }
-  setupKeyScrollGuard() {
-    if (!this.viewportEl)
-      return;
-    // Guard arrow keys and number keys used for Claude Code choice navigation
-    const guardKeys = new Set([
-      "ArrowUp", "ArrowDown",
-      "1", "2", "3", "4", "5", "6", "7", "8", "9", "0"
-    ]);
-    this.keyScrollGuardHandler = (ev) => {
-      if (!guardKeys.has(ev.key))
-        return;
-      if (!this.isTerminalActive())
-        return;
-      // Preserve scroll position via requestAnimationFrame
-      const top = this.viewportEl.scrollTop;
-      const left = this.viewportEl.scrollLeft;
-      requestAnimationFrame(() => {
-        this.viewportEl.scrollTop = top;
-        this.viewportEl.scrollLeft = left;
-      });
-      // Suppress auto-scroll while user is navigating choices
-      this.userScrolled = true;
-    };
-    this.viewportEl.addEventListener("keydown", this.keyScrollGuardHandler);
-    // Also attach to textarea for key events
-    if (this.term?.textarea) {
-      this.term.textarea.addEventListener("keydown", this.keyScrollGuardHandler);
-    }
   }
   setupFocusTracking() {
     if (!this.termHost)
@@ -7279,10 +7248,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     if (this.viewportEl && this.viewportScrollHandler) {
       this.viewportEl.removeEventListener("scroll", this.viewportScrollHandler);
-    }
-    if (this.keyScrollGuardHandler) {
-      this.viewportEl?.removeEventListener("keydown", this.keyScrollGuardHandler);
-      this.term?.textarea?.removeEventListener("keydown", this.keyScrollGuardHandler);
     }
     if (this.termHost && this.focusInHandler) {
       this.termHost.removeEventListener("focusin", this.focusInHandler);
