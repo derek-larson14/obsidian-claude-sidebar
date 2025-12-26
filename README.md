@@ -12,7 +12,7 @@ Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 
 ## Requirements
 
-- macOS or Linux
+- macOS, Linux, or Windows
 - Python 3
 - [Claude Code](https://claude.com/claude-code)
 
@@ -66,16 +66,34 @@ Then restart Obsidian or disable/re-enable the plugin.
 |----------|--------|
 | macOS | ✅ Supported |
 | Linux | ✅ Supported |
-| Windows | ❌ Not supported |
+| Windows | ⚠️ Experimental |
+
+### Windows Setup (Experimental)
+
+Windows requires additional dependencies:
+
+1. Install Python 3 from [python.org](https://python.org)
+2. Install pywinpty:
+```bash
+pip install pywinpty
+```
+
+3. Install the plugin (run from your vault folder in PowerShell):
+```powershell
+$u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip"; Invoke-WebRequest $u -OutFile s.zip; Expand-Archive s.zip .obsidian\plugins -Force; Move-Item ".obsidian\plugins\obsidian-claude-sidebar-main" ".obsidian\plugins\claude-sidebar" -Force; Remove-Item s.zip
+```
+
+**Note:** Windows support is experimental. Performance may be slower than macOS/Linux due to ConPTY overhead.
 
 ## How It Works
 
 - [xterm.js](https://xtermjs.org/) for terminal emulation
-- Python's built-in `pty` module for pseudo-terminal support
+- Python's built-in `pty` module for pseudo-terminal support (macOS/Linux)
+- [pywinpty](https://github.com/andfoy/pywinpty) for Windows PTY support
 
 ## Development
 
-The PTY script (`terminal_pty.py`) is embedded as base64 in `main.js` for Obsidian plugin directory compatibility. To rebuild after modifying the Python:
+The PTY scripts (`terminal_pty.py` for Unix, `terminal_win.py` for Windows) are embedded as base64 in `main.js` for Obsidian plugin directory compatibility. To rebuild after modifying:
 
 ```bash
 ./build.sh

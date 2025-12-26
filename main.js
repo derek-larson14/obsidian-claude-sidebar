@@ -7010,7 +7010,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term = new import_xterm.Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+      fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
       theme: this.getThemeColors(),
       scrollback: 10000
     });
@@ -7046,7 +7046,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.term.onData((data) => {
       if (this.proc && !this.proc.killed) {
-        this.proc.stdin?.write(data);
+        // Filter out focus in/out sequences before sending to shell
+        const filtered = data.replace(/\x1b\[I/g, '').replace(/\x1b\[O/g, '');
+        if (filtered) {
+          this.proc.stdin?.write(filtered);
+        }
       }
     });
     this.waitForHostReady().then(() => {
@@ -7159,28 +7163,31 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   startShell() {
     this.stopShell();
-    // Check for Windows - not supported
-    if (process.platform === "win32") {
-      this.term?.writeln("Claude Sidebar currently only supports macOS and Linux.");
-      this.term?.writeln("");
-      this.term?.writeln("Windows support requires a different approach - PRs welcome!");
-      return;
-    }
     const cwd = this.plugin.getVaultPath();
-    const shell = process.env.SHELL || "/bin/bash";
     const cols = this.term?.cols || 80;
     const rows = this.term?.rows || 24;
-    // PTY script embedded as base64 for Obsidian plugin directory compatibility
-    // See terminal_pty.py for readable source. Rebuild with: ./build.sh
+    const isWindows = process.platform === "win32";
+    const shell = isWindows
+      ? (process.env.COMSPEC || "cmd.exe")
+      : (process.env.SHELL || "/bin/bash");
+    // PTY scripts embedded as base64 for Obsidian plugin directory compatibility
+    // See terminal_pty.py and terminal_win.py for readable source. Rebuild with: ./build.sh
     const PTY_SCRIPT_B64 = "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJQVFkgd3JhcHBlciB3aXRoIHJlc2l6ZSBzdXBwb3J0IGZvciBPYnNpZGlhbiB0ZXJtaW5hbCBwbHVnaW4uIiIiCmltcG9ydCBvcwppbXBvcnQgc3lzCmltcG9ydCBwdHkKaW1wb3J0IHN0cnVjdAppbXBvcnQgZmNudGwKaW1wb3J0IHRlcm1pb3MKaW1wb3J0IHNlbGVjdAppbXBvcnQgc2lnbmFsCgpkZWYgc2V0X3NpemUoZmQsIGNvbHMsIHJvd3MpOgogICAgIiIiU2V0IHRoZSBQVFkgd2luZG93IHNpemUuIiIiCiAgICB3aW5zaXplID0gc3RydWN0LnBhY2soJ0hISEgnLCByb3dzLCBjb2xzLCAwLCAwKQogICAgZmNudGwuaW9jdGwoZmQsIHRlcm1pb3MuVElPQ1NXSU5TWiwgd2luc2l6ZSkKCmRlZiBtYWluKCk6CiAgICAjIFBhcnNlIGFyZ3M6IHRlcm1pbmFsX3B0eS5weSBbY29sc10gW3Jvd3NdIFtzaGVsbF0gW3NoZWxsX2FyZ3MuLi5dCiAgICBpZiBsZW4oc3lzLmFyZ3YpIDwgNDoKICAgICAgICBwcmludChmIlVzYWdlOiB7c3lzLmFyZ3ZbMF19IGNvbHMgcm93cyBzaGVsbCBbYXJncy4uLl0iLCBmaWxlPXN5cy5zdGRlcnIpCiAgICAgICAgc3lzLmV4aXQoMSkKCiAgICBjb2xzID0gaW50KHN5cy5hcmd2WzFdKQogICAgcm93cyA9IGludChzeXMuYXJndlsyXSkKICAgIHNoZWxsID0gc3lzLmFyZ3ZbM10KICAgIHNoZWxsX2FyZ3MgPSBzeXMuYXJndlszOl0gICMgSW5jbHVkZSBzaGVsbCBhcyBhcmd2WzBdCgogICAgcGlkLCBmZCA9IHB0eS5mb3JrKCkKCiAgICBpZiBwaWQgPT0gMDoKICAgICAgICAjIENoaWxkIHByb2Nlc3MgLSBleGVjIHRoZSBzaGVsbAogICAgICAgIG9zLmV4ZWN2cChzaGVsbCwgc2hlbGxfYXJncykKICAgICAgICBzeXMuZXhpdCgxKQoKICAgICMgUGFyZW50IHByb2Nlc3MKICAgICMgU2V0IGluaXRpYWwgc2l6ZQogICAgc2V0X3NpemUoZmQsIGNvbHMsIHJvd3MpCgogICAgc3RkaW5fZmQgPSBzeXMuc3RkaW4uZmlsZW5vKCkKCiAgICAjIE1ha2Ugc3RkaW4gbm9uLWJsb2NraW5nCiAgICBvbGRfZmxhZ3MgPSBmY250bC5mY250bChzdGRpbl9mZCwgZmNudGwuRl9HRVRGTCkKICAgIGZjbnRsLmZjbnRsKHN0ZGluX2ZkLCBmY250bC5GX1NFVEZMLCBvbGRfZmxhZ3MgfCBvcy5PX05PTkJMT0NLKQoKICAgIHJ1bm5pbmcgPSBUcnVlCiAgICB0cnk6CiAgICAgICAgd2hpbGUgcnVubmluZzoKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgcmxpc3QsIF8sIF8gPSBzZWxlY3Quc2VsZWN0KFtmZCwgc3RkaW5fZmRdLCBbXSwgW10sIDAuMDUpCiAgICAgICAgICAgIGV4Y2VwdCBzZWxlY3QuZXJyb3I6CiAgICAgICAgICAgICAgICBicmVhawoKICAgICAgICAgICAgZm9yIHJlYWR5X2ZkIGluIHJsaXN0OgogICAgICAgICAgICAgICAgaWYgcmVhZHlfZmQgPT0gZmQ6CiAgICAgICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgICAgICBkYXRhID0gb3MucmVhZChmZCwgMTYzODQpCiAgICAgICAgICAgICAgICAgICAgICAgIGlmIG5vdCBkYXRhOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgcnVubmluZyA9IEZhbHNlCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICAgICAgICAgICAgICBvcy53cml0ZShzeXMuc3Rkb3V0LmZpbGVubygpLCBkYXRhKQogICAgICAgICAgICAgICAgICAgICAgICBzeXMuc3Rkb3V0LmZsdXNoKCkKICAgICAgICAgICAgICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgICAgICAgICAgICAgcnVubmluZyA9IEZhbHNlCiAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgICAgICBlbGlmIHJlYWR5X2ZkID09IHN0ZGluX2ZkOgogICAgICAgICAgICAgICAgICAgIHRyeToKICAgICAgICAgICAgICAgICAgICAgICAgZGF0YSA9IG9zLnJlYWQoc3RkaW5fZmQsIDE2Mzg0KQogICAgICAgICAgICAgICAgICAgICAgICBpZiBub3QgZGF0YToKICAgICAgICAgICAgICAgICAgICAgICAgICAgICMgc3RkaW4gY2xvc2VkIC0gcGx1Z2luIHRlcm1pbmF0ZWQKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJ1bm5pbmcgPSBGYWxzZQogICAgICAgICAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgICAgICAgICAgICAgaWYgZGF0YToKICAgICAgICAgICAgICAgICAgICAgICAgICAgICMgQ2hlY2sgZm9yIHJlc2l6ZSBlc2NhcGUgc2VxdWVuY2UgYW55d2hlcmUgaW4gZGF0YTogXHgxYl1SRVNJWkU7Y29scztyb3dzXHgwNwogICAgICAgICAgICAgICAgICAgICAgICAgICAgd2hpbGUgYidceDFiXVJFU0laRTsnIGluIGRhdGE6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgc3RhcnQgPSBkYXRhLmluZGV4KGInXHgxYl1SRVNJWkU7JykKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGVuZCA9IGRhdGEuaW5kZXgoYidceDA3Jywgc3RhcnQpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHJlc2l6ZV9kYXRhID0gZGF0YVtzdGFydCs5OmVuZF0uZGVjb2RlKCkKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgYywgciA9IHJlc2l6ZV9kYXRhLnNwbGl0KCc7JykKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgc2V0X3NpemUoZmQsIGludChjKSwgaW50KHIpKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAjIFJlbW92ZSB0aGUgcmVzaXplIGNvbW1hbmQgZnJvbSBkYXRhCiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGRhdGEgPSBkYXRhWzpzdGFydF0gKyBkYXRhW2VuZCsxOl0KICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBleGNlcHQgKFZhbHVlRXJyb3IsIEluZGV4RXJyb3IpOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBicmVhawogICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgZGF0YToKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBvcy53cml0ZShmZCwgZGF0YSkKICAgICAgICAgICAgICAgICAgICBleGNlcHQgT1NFcnJvcjoKICAgICAgICAgICAgICAgICAgICAgICAgcnVubmluZyA9IEZhbHNlCiAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCgogICAgICAgICAgICAjIENoZWNrIGlmIGNoaWxkIGV4aXRlZAogICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICB3cGlkLCBzdGF0dXMgPSBvcy53YWl0cGlkKHBpZCwgb3MuV05PSEFORykKICAgICAgICAgICAgICAgIGlmIHdwaWQgPT0gcGlkOgogICAgICAgICAgICAgICAgICAgIHN5cy5leGl0KG9zLndhaXRzdGF0dXNfdG9fZXhpdGNvZGUoc3RhdHVzKSkKICAgICAgICAgICAgZXhjZXB0IENoaWxkUHJvY2Vzc0Vycm9yOgogICAgICAgICAgICAgICAgYnJlYWsKICAgIGZpbmFsbHk6CiAgICAgICAgZmNudGwuZmNudGwoc3RkaW5fZmQsIGZjbnRsLkZfU0VURkwsIG9sZF9mbGFncykKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBtYWluKCkK";
+    // Windows PTY script - uses winpty if available, falls back to subprocess
+    const WIN_PTY_SCRIPT_B64 = "IyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwoiIiJXaW5kb3dzIHRlcm1pbmFsIHdyYXBwZXIgdXNpbmcgQ29uUFRZIHZpYSBweXdpbnB0eS4iIiIKaW1wb3J0IHN5cwppbXBvcnQgcmUKaW1wb3J0IHRocmVhZGluZwoKIyBQcmUtY29tcGlsZSByZWdleCBwYXR0ZXJucyBmb3IgcGVyZm9ybWFuY2UKUkVTSVpFX1JFID0gcmUuY29tcGlsZShyYidceDFiXF1SRVNJWkU7WzAtOV0rO1swLTldK1x4MDcnLCByZS5JR05PUkVDQVNFKQpGT0NVU19JTl9SRSA9IHJlLmNvbXBpbGUocmInXHgxYlxbSScpCkZPQ1VTX09VVF9SRSA9IHJlLmNvbXBpbGUocmInXHgxYlxbTycpCgpkZWYgbWFpbigpOgogICAgIyBQYXJzZSBhcmdzOiB0ZXJtaW5hbF93aW4ucHkgW2NvbHNdIFtyb3dzXSBbc2hlbGxdCiAgICBpZiBsZW4oc3lzLmFyZ3YpIDwgNDoKICAgICAgICBwcmludChmIlVzYWdlOiB7c3lzLmFyZ3ZbMF19IGNvbHMgcm93cyBzaGVsbCIsIGZpbGU9c3lzLnN0ZGVycikKICAgICAgICBzeXMuZXhpdCgxKQoKICAgIGNvbHMgPSBpbnQoc3lzLmFyZ3ZbMV0pCiAgICByb3dzID0gaW50KHN5cy5hcmd2WzJdKQogICAgc2hlbGwgPSBzeXMuYXJndlszXQoKICAgICMgcHl3aW5wdHkgaXMgcmVxdWlyZWQgZm9yIFdpbmRvd3MgUFRZIHN1cHBvcnQKICAgIHRyeToKICAgICAgICBmcm9tIHdpbnB0eSBpbXBvcnQgUFRZCiAgICBleGNlcHQgSW1wb3J0RXJyb3I6CiAgICAgICAgcHJpbnQoInB5d2lucHR5IG5vdCBpbnN0YWxsZWQuIFJ1bjogcGlwIGluc3RhbGwgcHl3aW5wdHkiLCBmaWxlPXN5cy5zdGRlcnIpCiAgICAgICAgc3lzLmV4aXQoMSkKCiAgICB0cnk6CiAgICAgICAgcHR5ID0gUFRZKGNvbHMsIHJvd3MpCiAgICAgICAgcHR5LnNwYXduKHNoZWxsKQoKICAgICAgICBydW5uaW5nID0gVHJ1ZQoKICAgICAgICBkZWYgcmVhZF9vdXRwdXQoKToKICAgICAgICAgICAgbm9ubG9jYWwgcnVubmluZwogICAgICAgICAgICB3aGlsZSBydW5uaW5nIGFuZCBwdHkuaXNhbGl2ZSgpOgogICAgICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgICAgIGRhdGEgPSBwdHkucmVhZCgpCiAgICAgICAgICAgICAgICAgICAgaWYgZGF0YToKICAgICAgICAgICAgICAgICAgICAgICAgIyBweXdpbnB0eSByZXR1cm5zIHN0cmluZ3MKICAgICAgICAgICAgICAgICAgICAgICAgb3V0cHV0ID0gZGF0YS5lbmNvZGUoJ3V0Zi04JykgaWYgaXNpbnN0YW5jZShkYXRhLCBzdHIpIGVsc2UgZGF0YQogICAgICAgICAgICAgICAgICAgICAgICAjIEZpbHRlciBvdXQgZXNjYXBlIHNlcXVlbmNlcyB0aGF0IGdldCBlY2hvZWQgYmFjawogICAgICAgICAgICAgICAgICAgICAgICBvdXRwdXQgPSBSRVNJWkVfUkUuc3ViKGInJywgb3V0cHV0KQogICAgICAgICAgICAgICAgICAgICAgICBvdXRwdXQgPSBGT0NVU19JTl9SRS5zdWIoYicnLCBvdXRwdXQpCiAgICAgICAgICAgICAgICAgICAgICAgIG91dHB1dCA9IEZPQ1VTX09VVF9SRS5zdWIoYicnLCBvdXRwdXQpCiAgICAgICAgICAgICAgICAgICAgICAgIGlmIG91dHB1dDoKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLndyaXRlKG91dHB1dCkKICAgICAgICAgICAgICAgICAgICAgICAgICAgIHN5cy5zdGRvdXQuYnVmZmVyLmZsdXNoKCkKICAgICAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICAgICAgcGFzcwogICAgICAgICAgICBydW5uaW5nID0gRmFsc2UKCiAgICAgICAgb3V0cHV0X3RocmVhZCA9IHRocmVhZGluZy5UaHJlYWQodGFyZ2V0PXJlYWRfb3V0cHV0LCBkYWVtb249VHJ1ZSkKICAgICAgICBvdXRwdXRfdGhyZWFkLnN0YXJ0KCkKCiAgICAgICAgd2hpbGUgcnVubmluZyBhbmQgcHR5LmlzYWxpdmUoKToKICAgICAgICAgICAgdHJ5OgogICAgICAgICAgICAgICAgZGF0YSA9IHN5cy5zdGRpbi5idWZmZXIucmVhZCgxKQogICAgICAgICAgICAgICAgaWYgbm90IGRhdGE6CiAgICAgICAgICAgICAgICAgICAgYnJlYWsKICAgICAgICAgICAgICAgICMgQ2hlY2sgZm9yIHJlc2l6ZSBlc2NhcGUgc2VxdWVuY2UKICAgICAgICAgICAgICAgIGlmIGRhdGEgPT0gYidceDFiJzoKICAgICAgICAgICAgICAgICAgICBwZWVrID0gc3lzLnN0ZGluLmJ1ZmZlci5yZWFkKDcpCiAgICAgICAgICAgICAgICAgICAgaWYgcGVlayA9PSBiJ11SRVNJWkUnOgogICAgICAgICAgICAgICAgICAgICAgICAjIFJlYWQgdW50aWwgXHgwNwogICAgICAgICAgICAgICAgICAgICAgICByZXNpemVfZGF0YSA9IGInJwogICAgICAgICAgICAgICAgICAgICAgICB3aGlsZSBUcnVlOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgYyA9IHN5cy5zdGRpbi5idWZmZXIucmVhZCgxKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgaWYgYyA9PSBiJ1x4MDcnOgogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIGJyZWFrCiAgICAgICAgICAgICAgICAgICAgICAgICAgICByZXNpemVfZGF0YSArPSBjCiAgICAgICAgICAgICAgICAgICAgICAgICMgUGFyc2UgO2NvbHM7cm93cwogICAgICAgICAgICAgICAgICAgICAgICBwYXJ0cyA9IHJlc2l6ZV9kYXRhLmRlY29kZSgpLnN0cmlwKCc7Jykuc3BsaXQoJzsnKQogICAgICAgICAgICAgICAgICAgICAgICBpZiBsZW4ocGFydHMpID09IDI6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICB0cnk6CiAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgbmV3X2NvbHMsIG5ld19yb3dzID0gaW50KHBhcnRzWzBdKSwgaW50KHBhcnRzWzFdKQogICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgIHB0eS5zZXRfc2l6ZShuZXdfY29scywgbmV3X3Jvd3MpCiAgICAgICAgICAgICAgICAgICAgICAgICAgICBleGNlcHQgVmFsdWVFcnJvcjoKICAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICBwYXNzCiAgICAgICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICAgICAgcHR5LndyaXRlKChkYXRhICsgcGVlaykuZGVjb2RlKCd1dGYtOCcsIGVycm9ycz0ncmVwbGFjZScpKQogICAgICAgICAgICAgICAgZWxzZToKICAgICAgICAgICAgICAgICAgICBwdHkud3JpdGUoZGF0YS5kZWNvZGUoJ3V0Zi04JywgZXJyb3JzPSdyZXBsYWNlJykpCiAgICAgICAgICAgIGV4Y2VwdCBFeGNlcHRpb246CiAgICAgICAgICAgICAgICBicmVhawoKICAgICAgICBydW5uaW5nID0gRmFsc2UKICAgICAgICBzeXMuZXhpdCgwKQoKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICBwcmludChmIkVycm9yOiB7ZX0iLCBmaWxlPXN5cy5zdGRlcnIpCiAgICAgICAgc3lzLmV4aXQoMSkKCmlmIF9fbmFtZV9fID09ICdfX21haW5fXyc6CiAgICBtYWluKCkK";
     // Decode and write PTY script to temp file
     const os = require("os");
-    const ptyPath = path.join(os.tmpdir(), "claude_sidebar_pty.py");
+    const scriptB64 = isWindows ? WIN_PTY_SCRIPT_B64 : PTY_SCRIPT_B64;
+    const scriptName = isWindows ? "claude_sidebar_win.py" : "claude_sidebar_pty.py";
+    const ptyPath = path.join(os.tmpdir(), scriptName);
     // Always write to ensure current version (overwrites stale cached copies)
-    const ptyScript = Buffer.from(PTY_SCRIPT_B64, "base64").toString("utf-8");
+    const ptyScript = Buffer.from(scriptB64, "base64").toString("utf-8");
     fs.writeFileSync(ptyPath, ptyScript, { mode: 0o755 });
-    let cmd = "python3";
-    let args = [ptyPath, String(cols), String(rows), shell, "-i"];
+    // Use 'python' on Windows (works with both python.org and Microsoft Store installs)
+    let cmd = isWindows ? "python" : "python3";
+    let args = isWindows
+      ? [ptyPath, String(cols), String(rows), shell]
+      : [ptyPath, String(cols), String(rows), shell, "-i"];
     this.proc = (0, import_child_process.spawn)(cmd, args, {
       cwd,
       env: { ...process.env, TERM: "xterm-256color" },
@@ -7197,13 +7204,23 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.term?.write(this.stderrDecoder.write(data));
     });
     this.proc.on("exit", (code, signal) => {
-      this.term?.writeln(`\r
-[Process exited: ${code ?? signal}]`);
+      if (isWindows && code === 9009) {
+        this.term?.writeln("\r\n[Python not found]");
+        this.term?.writeln("Install Python: winget install Python.Python.3");
+        this.term?.writeln("Or download from: https://python.org");
+      } else {
+        this.term?.writeln(`\r\n[Process exited: ${code ?? signal}]`);
+      }
       this.proc = null;
     });
     this.proc.on("error", (err) => {
-      this.term?.writeln(`\r
-[Error: ${err.message}]`);
+      if (isWindows && err.message.includes("ENOENT")) {
+        this.term?.writeln("\r\n[Python not found]");
+        this.term?.writeln("Install Python: winget install Python.Python.3");
+        this.term?.writeln("Or download from: https://python.org");
+      } else {
+        this.term?.writeln(`\r\n[Error: ${err.message}]`);
+      }
     });
     this.term?.onResize(({ cols: c, rows: r }) => {
       if (this.proc && !this.proc.killed) {
@@ -7212,11 +7229,13 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.term?.focus();
     // Auto-launch Claude Code after shell initializes
+    // Windows needs longer delay for ConPTY to settle
+    const launchDelay = process.platform === "win32" ? 1000 : 300;
     setTimeout(() => {
       if (this.proc && !this.proc.killed) {
         this.proc.stdin?.write('claude\r');
       }
-    }, 300);
+    }, launchDelay);
     // Focus again after Claude Code has time to start
     setTimeout(() => {
       this.term?.focus();
