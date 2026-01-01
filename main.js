@@ -7119,7 +7119,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     let cmd = isWindows ? "python" : "python3";
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
-      : [ptyPath, String(cols), String(rows), shell, "-i"];
+      : [ptyPath, String(cols), String(rows), shell, "-lc", "claude || true; exec $SHELL -i"];
     this.proc = (0, import_child_process.spawn)(cmd, args, {
       cwd,
       env: { ...process.env, TERM: "xterm-256color" },
@@ -7160,18 +7160,14 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     });
     this.term?.focus();
-    // Auto-launch Claude Code after shell initializes
-    // Windows needs longer delay for ConPTY to settle
-    const launchDelay = process.platform === "win32" ? 1000 : 300;
-    setTimeout(() => {
-      if (this.proc && !this.proc.killed) {
-        this.proc.stdin?.write('claude\r');
-      }
-    }, launchDelay);
-    // Focus again after Claude Code has time to start
-    setTimeout(() => {
-      this.term?.focus();
-    }, 2000);
+    // Windows still needs auto-launch since we can't use exec there
+    if (isWindows) {
+      setTimeout(() => {
+        if (this.proc && !this.proc.killed) {
+          this.proc.stdin?.write('claude\r');
+        }
+      }, 1000);
+    }
   }
   stopShell() {
     if (this.proc && !this.proc.killed) {
