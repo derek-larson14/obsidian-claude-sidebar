@@ -2,13 +2,15 @@
 
 Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 
-![Claude Sidebar](screenshot.png)
+![Claude Sidebar](screenshot-obsidian.png)
 
 ## Features
 
 - **Embedded terminal** - Full terminal in your Obsidian sidebar
 - **Auto-launches Claude** - Claude Code starts automatically
 - **Multiple tabs** - Run multiple Claude instances side by side
+
+<video src="demo.mp4" controls width="100%"></video>
 
 ## Requirements
 
