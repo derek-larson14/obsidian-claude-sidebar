@@ -10,8 +10,6 @@ Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 - **Auto-launches Claude** - Claude Code starts automatically
 - **Multiple tabs** - Run multiple Claude instances side by side
 
-<video src="https://github.com/derek-larson14/obsidian-claude-sidebar/raw/main/demo.mp4" controls width="100%"></video>
-
 ## Requirements
 
 - macOS, Linux, or Windows
@@ -54,6 +52,8 @@ curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/late
 Then restart Obsidian or disable/re-enable the plugin.
 
 ## Usage
+
+https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 
 - Click the bot icon in the left ribbon to open Claude
 - Use Command Palette (`Cmd+P`) for:
