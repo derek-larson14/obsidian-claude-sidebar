@@ -7120,9 +7120,28 @@ var TerminalView = class extends import_obsidian.ItemView {
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
       : [ptyPath, String(cols), String(rows), shell, "-lc", "claude || true; exec $SHELL -i"];
+
+    // Get PATH from user's login shell (GUI apps don't inherit shell config)
+    let shellEnv = { ...process.env, TERM: "xterm-256color" };
+    if (!isWindows) {
+      try {
+        const shellOutput = (0, import_child_process.execSync)(
+          `${shell} -lic 'echo "__PATH__"; echo "$PATH"'`,
+          { encoding: 'utf8', timeout: 5000 }
+        );
+        // Extract PATH from after the marker (shell integration escapes pollute early output)
+        const shellPath = shellOutput.split('__PATH__\n')[1]?.trim().split('\n')[0];
+        if (shellPath) {
+          shellEnv.PATH = shellPath;
+        }
+      } catch (e) {
+        // Fall back to process.env.PATH if shell init fails
+      }
+    }
+
     this.proc = (0, import_child_process.spawn)(cmd, args, {
       cwd,
-      env: { ...process.env, TERM: "xterm-256color" },
+      env: shellEnv,
       stdio: ["pipe", "pipe", "pipe"]
     });
     // Use StringDecoder to properly handle UTF-8 boundaries across chunks
