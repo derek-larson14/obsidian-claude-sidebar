@@ -31,7 +31,7 @@ Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude 
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
+1. Download `main.js`, `manifest.json`, `styles.css`, and `symbols-nerd-font.woff2` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
 2. Create folder: `<your-vault>/.obsidian/plugins/claude-sidebar/`
 3. Copy the downloaded files into that folder
 4. Reload Obsidian and enable the plugin in Settings → Community Plugins
@@ -47,6 +47,7 @@ In your vault folder, run:
 cd .obsidian/plugins/claude-sidebar
 curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js
 curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json
+curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/symbols-nerd-font.woff2
 ```
 
 Then restart Obsidian or disable/re-enable the plugin.
@@ -94,6 +95,7 @@ $u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip";
 - [xterm.js](https://xtermjs.org/) for terminal emulation
 - Python's built-in `pty` module for pseudo-terminal support (macOS/Linux)
 - [pywinpty](https://github.com/andfoy/pywinpty) for Windows PTY support
+- [Symbols Nerd Font](https://github.com/ryanoasis/nerd-fonts) for terminal icons (MIT License, © Ryan L McIntyre)
 
 ## Development
 

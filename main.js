@@ -7015,7 +7015,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term = new import_xterm.Terminal({
       cursorBlink: true,
       fontSize: 13,
-      fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', monospace",
+      fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', 'Symbols Nerd Font Mono', monospace",
       theme: this.getThemeColors(),
       scrollback: 10000
     });
@@ -7224,6 +7224,7 @@ var TerminalView = class extends import_obsidian.ItemView {
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async onload() {
+    await this.loadNerdFont();
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     this.addRibbonIcon("bot", "Open Claude", () => this.activateView());
     this.addCommand({
@@ -7277,6 +7278,36 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   }
   onunload() {
     // Don't detach leaves - Obsidian manages leaf lifecycle during plugin updates
+    // Remove injected font style
+    const fontStyle = document.getElementById('nerd-font-style');
+    if (fontStyle) fontStyle.remove();
+  }
+  async loadNerdFont() {
+    try {
+      const pluginDir = this.manifest?.dir;
+      const basePath = this.app?.vault?.adapter?.basePath;
+      if (!pluginDir || !basePath) return;
+      const path = require('path');
+      const fontPath = path.join(basePath, pluginDir, 'symbols-nerd-font.woff2');
+      const fs = require('fs');
+      if (!fs.existsSync(fontPath)) return;
+      const fontData = fs.readFileSync(fontPath);
+      const fontB64 = fontData.toString('base64');
+      const style = document.createElement('style');
+      style.id = 'nerd-font-style';
+      style.textContent = `
+        @font-face {
+          font-family: 'Symbols Nerd Font Mono';
+          src: url(data:font/woff2;base64,${fontB64}) format('woff2');
+          font-weight: normal;
+          font-style: normal;
+          font-display: swap;
+        }
+      `;
+      document.head.appendChild(style);
+    } catch (e) {
+      // Font loading is optional - terminal works without it
+    }
   }
   getVaultPath() {
     const adapter = this.app.vault.adapter;
