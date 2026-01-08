@@ -22,7 +22,7 @@ Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
 
 In your vault folder, run:
 ```bash
-curl -sL https://github.com/derek-larson14/obsidian-claude-sidebar/archive/refs/heads/main.tar.gz | tar -xz -C .obsidian/plugins && mv .obsidian/plugins/obsidian-claude-sidebar-main .obsidian/plugins/claude-sidebar
+curl -sL https://github.com/hlibkoval/obsidian-claude-sidebar/archive/refs/heads/main.tar.gz | tar -xz -C .obsidian/plugins && mv .obsidian/plugins/obsidian-claude-sidebar-main .obsidian/plugins/claude-sidebar
 ```
 
 Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude Sidebar"
@@ -31,7 +31,7 @@ Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude 
 
 ### Manual Installation
 
-1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/derek-larson14/obsidian-claude-sidebar/releases)
+1. Download `main.js`, `manifest.json`, and `styles.css` from the [latest release](https://github.com/hlibkoval/obsidian-claude-sidebar/releases)
 2. Create folder: `<your-vault>/.obsidian/plugins/claude-sidebar/`
 3. Copy the downloaded files into that folder
 4. Reload Obsidian and enable the plugin in Settings → Community Plugins
@@ -45,8 +45,8 @@ Once approved, you'll be able to search for "Claude Sidebar" in Community Plugin
 In your vault folder, run:
 ```bash
 cd .obsidian/plugins/claude-sidebar
-curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js
-curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json
+curl -LO https://github.com/hlibkoval/obsidian-claude-sidebar/releases/latest/download/main.js
+curl -LO https://github.com/hlibkoval/obsidian-claude-sidebar/releases/latest/download/manifest.json
 ```
 
 Then restart Obsidian or disable/re-enable the plugin.
@@ -84,7 +84,7 @@ pip install pywinpty
 
 3. Install the plugin (run from your vault folder in PowerShell):
 ```powershell
-$u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip"; Invoke-WebRequest $u -OutFile s.zip; Expand-Archive s.zip .obsidian\plugins -Force; Move-Item ".obsidian\plugins\obsidian-claude-sidebar-main" ".obsidian\plugins\claude-sidebar" -Force; Remove-Item s.zip
+$u="https://github.com/hlibkoval/obsidian-claude-sidebar/archive/main.zip"; Invoke-WebRequest $u -OutFile s.zip; Expand-Archive s.zip .obsidian\plugins -Force; Move-Item ".obsidian\plugins\obsidian-claude-sidebar-main" ".obsidian\plugins\claude-sidebar" -Force; Remove-Item s.zip
 ```
 
 **Note:** Windows support is experimental. Performance may be slower than macOS/Linux due to ConPTY overhead.
@@ -105,11 +105,13 @@ The PTY scripts (`terminal_pty.py` for Unix, `terminal_win.py` for Windows) are 
 
 ## Contributing
 
-Issues and PRs welcome at [github.com/derek-larson14/obsidian-claude-sidebar](https://github.com/derek-larson14/obsidian-claude-sidebar)
+Issues and PRs welcome at [github.com/hlibkoval/obsidian-claude-sidebar](https://github.com/hlibkoval/obsidian-claude-sidebar)
 
 ## Author
 
-Built by [Derek Larson](https://dtlarson.com). Want to get more out of Claude Code? See [Delegate with Claude](https://delegatewithclaude.com).
+Fork maintained by [Hlib Koval](https://github.com/hlibkoval).
+
+Originally built by [Derek Larson](https://dtlarson.com).
 
 ## License
 
