@@ -7115,8 +7115,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Always write to ensure current version (overwrites stale cached copies)
     const ptyScript = Buffer.from(scriptB64, "base64").toString("utf-8");
     fs.writeFileSync(ptyPath, ptyScript, { mode: 0o755 });
-    // Use 'python' on Windows (works with both python.org and Microsoft Store installs)
-    let cmd = isWindows ? "python" : "python3";
+    // Use 'py' launcher on Windows - it's installed in C:\Windows by python.org installer
+    // and reliably finds Python even when PATH isn't configured or App execution aliases interfere
+    let cmd = isWindows ? "py" : "python3";
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
       : [ptyPath, String(cols), String(rows), shell, "-lc", "claude || true; exec $SHELL -i"];
@@ -7156,9 +7157,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.proc.on("exit", (code, signal) => {
       if (isWindows && code === 9009) {
-        this.term?.writeln("\r\n[Python not found]");
-        this.term?.writeln("Install Python: winget install Python.Python.3");
-        this.term?.writeln("Or download from: https://python.org");
+        this.term?.writeln("\r\n[Python launcher (py) not found]");
+        this.term?.writeln("Install Python from https://python.org (includes py launcher)");
+        this.term?.writeln("Or run: winget install Python.Python.3");
       } else {
         this.term?.writeln(`\r\n[Process exited: ${code ?? signal}]`);
       }
@@ -7166,9 +7167,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.proc.on("error", (err) => {
       if (isWindows && err.message.includes("ENOENT")) {
-        this.term?.writeln("\r\n[Python not found]");
-        this.term?.writeln("Install Python: winget install Python.Python.3");
-        this.term?.writeln("Or download from: https://python.org");
+        this.term?.writeln("\r\n[Python launcher (py) not found]");
+        this.term?.writeln("Install Python from https://python.org (includes py launcher)");
+        this.term?.writeln("Or run: winget install Python.Python.3");
       } else {
         this.term?.writeln(`\r\n[Error: ${err.message}]`);
       }
