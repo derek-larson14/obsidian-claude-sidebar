@@ -7251,7 +7251,7 @@ var TerminalView = class extends import_obsidian.ItemView {
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
-    this.addRibbonIcon("bot", "Open Claude", () => this.activateView());
+    this.addRibbonIcon("bot", "New Claude Tab", () => this.createNewTab());
     this.addCommand({
       id: "open-claude",
       name: "Open Claude Code",
