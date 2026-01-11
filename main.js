@@ -7009,6 +7009,15 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.term.options.theme = newTheme;
     }
   }
+  async saveImageToTemp(blob) {
+    const os = require("os");
+    const ext = blob.type.split("/")[1] || "png";
+    const filename = `claude_paste_${Date.now()}.${ext}`;
+    const tempPath = path.join(os.tmpdir(), filename);
+    const buffer = Buffer.from(await blob.arrayBuffer());
+    fs.writeFileSync(tempPath, buffer);
+    return tempPath;
+  }
   initTerminal() {
     if (!this.termHost)
       return;
@@ -7024,6 +7033,33 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.open(this.termHost);
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
+    // Handle image paste - use capture phase to intercept before xterm's textarea
+    this.imagePasteHandler = async (e) => {
+      // Only handle if terminal has focus
+      if (!this.containerEl.contains(document.activeElement)) return;
+      const items = e.clipboardData?.items;
+      if (!items) return;
+      for (const item of items) {
+        if (item.type.startsWith("image/")) {
+          e.preventDefault();
+          e.stopPropagation();
+          const blob = item.getAsFile();
+          if (blob) {
+            try {
+              const imagePath = await this.saveImageToTemp(blob);
+              // Insert the path into the terminal input (quoted for paths with spaces)
+              if (this.proc && !this.proc.killed) {
+                this.proc.stdin?.write(`"${imagePath}" `);
+              }
+            } catch (err) {
+              this.term?.writeln(`\r\n[Image paste error: ${err.message}]`);
+            }
+          }
+          return;
+        }
+      }
+    };
+    document.addEventListener("paste", this.imagePasteHandler, true);
     this.term.attachCustomKeyEventHandler((ev) => {
       if (ev.type === 'keydown') {
         // Cmd+Arrow: readline shortcuts for line navigation
@@ -7241,6 +7277,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.escapeScope) {
       this.app.keymap.popScope(this.escapeScope);
       this.escapeScope = null;
+    }
+    if (this.imagePasteHandler) {
+      document.removeEventListener("paste", this.imagePasteHandler, true);
+      this.imagePasteHandler = null;
     }
     this.stopShell();
     this.term?.dispose();
