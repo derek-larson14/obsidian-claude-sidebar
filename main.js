@@ -7115,8 +7115,34 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Always write to ensure current version (overwrites stale cached copies)
     const ptyScript = Buffer.from(scriptB64, "base64").toString("utf-8");
     fs.writeFileSync(ptyPath, ptyScript, { mode: 0o755 });
-    // Use 'python' on Windows (works with both python.org and Microsoft Store installs)
-    let cmd = isWindows ? "python" : "python3";
+    // Find Python on Windows - try multiple methods since GUI apps have PATH issues
+    let cmd = "python3";
+    if (isWindows) {
+      cmd = null;
+      // 1. Try 'py' launcher (installed by python.org installer to C:\Windows)
+      try {
+        (0, import_child_process.execSync)("py --version", { stdio: "ignore", timeout: 2000 });
+        cmd = "py";
+      } catch (e) {}
+      // 2. Try 'where.exe python' and use first result that isn't the WindowsApps alias
+      if (!cmd) {
+        try {
+          const whereOutput = (0, import_child_process.execSync)("where.exe python", { encoding: "utf8", timeout: 2000 });
+          const pythonPaths = whereOutput.split(/\r?\n/).map(p => p.trim()).filter(p => p && !p.includes("WindowsApps"));
+          // Prefer .bat shims (pyenv-win), otherwise use first valid path
+          const batShim = pythonPaths.find(p => p.toLowerCase().endsWith(".bat"));
+          if (batShim) {
+            cmd = batShim;
+          } else if (pythonPaths.length > 0) {
+            cmd = pythonPaths[0];
+          }
+        } catch (e) {}
+      }
+      // 3. Fall back to 'python' and hope for the best
+      if (!cmd) {
+        cmd = "python";
+      }
+    }
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
       : [ptyPath, String(cols), String(rows), shell, "-lc", "claude || true; exec $SHELL -i"];
@@ -7157,8 +7183,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.proc.on("exit", (code, signal) => {
       if (isWindows && code === 9009) {
         this.term?.writeln("\r\n[Python not found]");
-        this.term?.writeln("Install Python: winget install Python.Python.3");
-        this.term?.writeln("Or download from: https://python.org");
+        this.term?.writeln("Install Python from https://python.org");
+        this.term?.writeln("Or run: winget install Python.Python.3");
       } else {
         this.term?.writeln(`\r\n[Process exited: ${code ?? signal}]`);
       }
@@ -7167,8 +7193,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.proc.on("error", (err) => {
       if (isWindows && err.message.includes("ENOENT")) {
         this.term?.writeln("\r\n[Python not found]");
-        this.term?.writeln("Install Python: winget install Python.Python.3");
-        this.term?.writeln("Or download from: https://python.org");
+        this.term?.writeln("Install Python from https://python.org");
+        this.term?.writeln("Or run: winget install Python.Python.3");
       } else {
         this.term?.writeln(`\r\n[Error: ${err.message}]`);
       }
