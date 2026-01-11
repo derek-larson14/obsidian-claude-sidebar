@@ -7289,9 +7289,18 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
+  constructor() {
+    super(...arguments);
+    this.lastRibbonClick = 0;
+  }
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
-    this.addRibbonIcon("bot", "New Claude Tab", () => this.createNewTab());
+    this.addRibbonIcon("bot", "New Claude Tab", () => {
+      const now = Date.now();
+      if (now - this.lastRibbonClick < 1500) return; // 1.5s throttle to prevent accidental double-clicks
+      this.lastRibbonClick = now;
+      this.createNewTab();
+    });
     this.addCommand({
       id: "open-claude",
       name: "Open Claude Code",
