@@ -7128,8 +7128,12 @@ var TerminalView = class extends import_obsidian.ItemView {
       if (!cmd) {
         try {
           const whereOutput = (0, import_child_process.execSync)("where.exe python", { encoding: "utf8", timeout: 2000 });
-          const pythonPaths = whereOutput.split("\n").map(p => p.trim()).filter(p => p && !p.includes("WindowsApps"));
-          if (pythonPaths.length > 0) {
+          const pythonPaths = whereOutput.split(/\r?\n/).map(p => p.trim()).filter(p => p && !p.includes("WindowsApps"));
+          // Prefer .bat shims (pyenv-win), otherwise use first valid path
+          const batShim = pythonPaths.find(p => p.toLowerCase().endsWith(".bat"));
+          if (batShim) {
+            cmd = batShim;
+          } else if (pythonPaths.length > 0) {
             cmd = pythonPaths[0];
           }
         } catch (e) {}
