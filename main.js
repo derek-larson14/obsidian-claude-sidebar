@@ -7061,6 +7061,16 @@ var TerminalView = class extends import_obsidian.ItemView {
     };
     document.addEventListener("paste", this.imagePasteHandler, true);
     this.term.attachCustomKeyEventHandler((ev) => {
+      // Shift+Enter: send Alt+Enter for multi-line input
+      // Must block both keydown and keypress events to prevent xterm from sending normal Enter
+      if (ev.key === 'Enter' && ev.shiftKey) {
+        if (ev.type === 'keydown') {
+          if (this.proc && !this.proc.killed) {
+            this.proc.stdin?.write('\x1b\r');
+          }
+        }
+        return false; // Block both keydown and keypress
+      }
       if (ev.type === 'keydown') {
         // Cmd+Arrow: readline shortcuts for line navigation
         if (ev.metaKey) {
@@ -7072,13 +7082,6 @@ var TerminalView = class extends import_obsidian.ItemView {
             this.proc?.stdin?.write('\x01'); // Ctrl+A = start of line
             return false;
           }
-        }
-        // Shift+Enter: send Alt+Enter for multi-line input
-        if (ev.key === 'Enter' && ev.shiftKey) {
-          if (this.proc && !this.proc.killed) {
-            this.proc.stdin?.write('\x1b\r');
-          }
-          return false;
         }
       }
       return true;
