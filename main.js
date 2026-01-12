@@ -7370,6 +7370,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     if (leaf) {
       await leaf.setViewState({ type: VIEW_TYPE, active: true });
       this.app.workspace.revealLeaf(leaf);
+      // Focus the terminal after the leaf is revealed
+      setTimeout(() => {
+        const view = leaf.view;
+        if (view instanceof TerminalView && view.term) {
+          view.term.focus();
+        }
+      }, 50);
     }
   }
 };
