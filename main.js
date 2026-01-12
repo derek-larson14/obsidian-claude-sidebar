@@ -7061,6 +7061,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     };
     document.addEventListener("paste", this.imagePasteHandler, true);
     this.term.attachCustomKeyEventHandler((ev) => {
+      // Don't interfere with IME composition (Chinese, Japanese, Korean input methods)
+      if (ev.isComposing) return true;
+
       // Shift+Enter: send Alt+Enter for multi-line input
       // Must block both keydown and keypress events to prevent xterm from sending normal Enter
       if (ev.key === 'Enter' && ev.shiftKey) {
