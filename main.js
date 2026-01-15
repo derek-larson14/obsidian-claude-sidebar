@@ -7331,6 +7331,36 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       name: "Toggle Focus: Editor ↔ Claude",
       callback: () => this.toggleFocus()
     });
+    this.addCommand({
+      id: "send-file-to-claude",
+      name: "Send File Path to Claude",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file) return false;
+
+        if (!checking) {
+          const absolutePath = `"${this.getVaultPath()}/${file.path}" `;
+          this.sendTextToTerminal(absolutePath);
+        }
+        return true;
+      }
+    });
+    this.addCommand({
+      id: "send-selection-to-claude",
+      name: "Send Selection to Claude",
+      checkCallback: (checking) => {
+        const editor = this.app.workspace.activeEditor?.editor;
+        if (!editor) return false;
+
+        const selection = editor.getSelection();
+        if (!selection) return false;
+
+        if (!checking) {
+          this.sendTextToTerminal(selection);
+        }
+        return true;
+      }
+    });
   }
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
@@ -7381,5 +7411,27 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         }
       }, 50);
     }
+  }
+  async sendTextToTerminal(text) {
+    let leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    if (leaves.length === 0) {
+      await this.createNewTab();
+      leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    }
+    if (leaves.length === 0) return false;
+
+    const leaf = leaves[0];
+    const view = leaf.view;
+
+    if (!(view instanceof TerminalView)) return false;
+    if (!view.proc || view.proc.killed) return false;
+
+    view.proc.stdin?.write(text);
+
+    this.app.workspace.setActiveLeaf(leaf, { focus: true });
+    if (view.term) {
+      view.term.focus();
+    }
+    return true;
   }
 };
