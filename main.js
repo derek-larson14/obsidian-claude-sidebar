@@ -6725,6 +6725,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.focusOutHandler = null;
     this.stdoutDecoder = null;
     this.stderrDecoder = null;
+    // Scroll position manager state
+    this.lastStableScrollPos = 0;
+    this.scrollLockUntil = 0;
+    this.scrollRestoreTimeout = null;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -7033,6 +7037,35 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.open(this.termHost);
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
+    // Scroll position manager - prevents terminal jumping during Claude Code permission prompts
+    // Ink TUI redraws can cause unwanted jumps to top; this detects and restores position
+    this.term.onScroll((scrollPos) => {
+      const now = Date.now();
+      // If we're in a lock period, ignore scroll events
+      if (now < this.scrollLockUntil) {
+        return;
+      }
+      // Detect suspicious jump: position suddenly 0 from a significant scroll position (>10 lines)
+      const SIGNIFICANT_SCROLL_THRESHOLD = 10;
+      if (scrollPos === 0 && this.lastStableScrollPos > SIGNIFICANT_SCROLL_THRESHOLD) {
+        // Clear any pending restore
+        if (this.scrollRestoreTimeout) {
+          clearTimeout(this.scrollRestoreTimeout);
+        }
+        // Lock scroll updates for 200ms to prevent conflicting updates
+        this.scrollLockUntil = now + 200;
+        // Restore after brief delay (50ms) to let the redraw settle
+        this.scrollRestoreTimeout = setTimeout(() => {
+          if (this.term) {
+            this.term.scrollToLine(this.lastStableScrollPos);
+          }
+          this.scrollRestoreTimeout = null;
+        }, 50);
+      } else {
+        // Normal scroll - update stable position
+        this.lastStableScrollPos = scrollPos;
+      }
+    });
     // Handle image paste - use capture phase to intercept before xterm's textarea
     this.imagePasteHandler = async (e) => {
       // Only handle if terminal has focus
@@ -7276,6 +7309,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.fitTimeout) {
       clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
+    }
+    if (this.scrollRestoreTimeout) {
+      clearTimeout(this.scrollRestoreTimeout);
+      this.scrollRestoreTimeout = null;
     }
     if (this.escapeScope) {
       this.app.keymap.popScope(this.escapeScope);
