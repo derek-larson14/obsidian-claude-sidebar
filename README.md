@@ -1,6 +1,6 @@
 # Claude Sidebar
 
-Run [Claude Code](https://claude.com/claude-code) in your Obsidian sidebar.
+Run Claude Code in your Obsidian sidebar.
 
 Built by [Derek Larson](https://dtlarson.com) for [Delegate with Claude](https://delegatewithclaude.com).
 
