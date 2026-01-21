@@ -9,12 +9,37 @@ import termios
 import select
 import signal
 
+# Global to track child PID for signal handler
+child_pid = None
+
+def cleanup_child(signum, frame):
+    """Kill the child process when we receive a signal."""
+    global child_pid
+    if child_pid:
+        try:
+            os.kill(child_pid, signal.SIGTERM)
+            # Give it a moment to exit gracefully
+            for _ in range(10):
+                pid, _ = os.waitpid(child_pid, os.WNOHANG)
+                if pid != 0:
+                    break
+                import time
+                time.sleep(0.1)
+            else:
+                # Force kill if still running
+                os.kill(child_pid, signal.SIGKILL)
+        except (ProcessLookupError, ChildProcessError):
+            pass
+    sys.exit(0)
+
 def set_size(fd, cols, rows):
     """Set the PTY window size."""
     winsize = struct.pack('HHHH', rows, cols, 0, 0)
     fcntl.ioctl(fd, termios.TIOCSWINSZ, winsize)
 
 def main():
+    global child_pid
+
     # Parse args: terminal_pty.py [cols] [rows] [shell] [shell_args...]
     if len(sys.argv) < 4:
         print(f"Usage: {sys.argv[0]} cols rows shell [args...]", file=sys.stderr)
@@ -26,6 +51,7 @@ def main():
     shell_args = sys.argv[3:]  # Include shell as argv[0]
 
     pid, fd = pty.fork()
+    child_pid = pid  # Store for signal handler
 
     if pid == 0:
         # Child process - exec the shell
@@ -33,6 +59,10 @@ def main():
         sys.exit(1)
 
     # Parent process
+    # Register signal handlers to clean up child on termination
+    signal.signal(signal.SIGTERM, cleanup_child)
+    signal.signal(signal.SIGHUP, cleanup_child)
+
     # Set initial size
     set_size(fd, cols, rows)
 
@@ -97,6 +127,20 @@ def main():
                 break
     finally:
         fcntl.fcntl(stdin_fd, fcntl.F_SETFL, old_flags)
+        # Ensure child is terminated when we exit
+        if child_pid:
+            try:
+                os.kill(child_pid, signal.SIGTERM)
+                for _ in range(10):
+                    wpid, _ = os.waitpid(child_pid, os.WNOHANG)
+                    if wpid != 0:
+                        break
+                    import time
+                    time.sleep(0.1)
+                else:
+                    os.kill(child_pid, signal.SIGKILL)
+            except (ProcessLookupError, ChildProcessError, OSError):
+                pass
 
 if __name__ == '__main__':
     main()
