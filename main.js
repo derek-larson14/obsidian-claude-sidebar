@@ -7037,24 +7037,28 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.open(this.termHost);
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
-    // Scroll position manager - prevents terminal jumping during Claude Code permission prompts
-    // Ink TUI redraws can cause unwanted jumps to top; this detects and restores position
+    // Scroll position manager - prevents terminal jumping during Claude Code redraws
+    // Ink TUI and fit() calls can cause unwanted scroll position resets
     this.term.onScroll((scrollPos) => {
       const now = Date.now();
       // If we're in a lock period, ignore scroll events
       if (now < this.scrollLockUntil) {
         return;
       }
-      // Detect suspicious jump: position suddenly 0 from a significant scroll position (>10 lines)
-      const SIGNIFICANT_SCROLL_THRESHOLD = 10;
-      if (scrollPos === 0 && this.lastStableScrollPos > SIGNIFICANT_SCROLL_THRESHOLD) {
+      // Detect suspicious jump: large sudden change in scroll position
+      // This catches both jumps to 0 AND jumps to other positions during reflows
+      const JUMP_THRESHOLD = 50; // lines - larger jumps are suspicious
+      const MINIMUM_SCROLL_POS = 10; // only protect if we had meaningful scroll history
+      const delta = Math.abs(scrollPos - this.lastStableScrollPos);
+
+      if (delta > JUMP_THRESHOLD && this.lastStableScrollPos > MINIMUM_SCROLL_POS) {
         // Clear any pending restore
         if (this.scrollRestoreTimeout) {
           clearTimeout(this.scrollRestoreTimeout);
         }
         // Lock scroll updates for 200ms to prevent conflicting updates
         this.scrollLockUntil = now + 200;
-        // Restore after brief delay (50ms) to let the redraw settle
+        // Restore after brief delay to let the redraw settle
         this.scrollRestoreTimeout = setTimeout(() => {
           if (this.term) {
             this.term.scrollToLine(this.lastStableScrollPos);
@@ -7140,7 +7144,22 @@ var TerminalView = class extends import_obsidian.ItemView {
   fit() {
     if (!this.term || !this.fitAddon) return;
     try {
+      // Save scroll state before fit - fit() can reset scroll position
+      const buffer = this.term.buffer.active;
+      const wasAtBottom = buffer.viewportY >= buffer.baseY;
+      const savedViewportY = buffer.viewportY;
+
       this.fitAddon.fit();
+
+      // Restore scroll position after fit settles
+      requestAnimationFrame(() => {
+        if (!this.term) return;
+        if (wasAtBottom) {
+          this.term.scrollToBottom();
+        } else {
+          this.term.scrollToLine(savedViewportY);
+        }
+      });
     } catch (e) {}
   }
   debouncedFit() {
