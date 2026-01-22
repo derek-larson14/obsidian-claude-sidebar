@@ -7235,6 +7235,12 @@ var TerminalView = class extends import_obsidian.ItemView {
       } catch (e) {
         // Fall back to process.env.PATH if shell init fails
       }
+      // Ensure ~/.local/bin is in PATH for Claude Code (official installer location)
+      const homeDir = process.env.HOME || '';
+      const localBin = `${homeDir}/.local/bin`;
+      if (homeDir && shellEnv.PATH && !shellEnv.PATH.includes(localBin)) {
+        shellEnv.PATH = `${localBin}:${shellEnv.PATH}`;
+      }
     }
 
     this.proc = (0, import_child_process.spawn)(cmd, args, {
