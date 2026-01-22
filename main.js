@@ -7097,6 +7097,44 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     };
     document.addEventListener("paste", this.imagePasteHandler, true);
+    // Handle file drag-and-drop
+    this.fileDragOverHandler = (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = 'copy';
+    };
+    this.fileDropHandler = async (e) => {
+      e.preventDefault();
+      if (!this.proc || this.proc.killed) return;
+      // Check for Obsidian internal file drag (obsidian:// URL)
+      const textData = e.dataTransfer?.getData('text/plain');
+      if (textData && textData.startsWith('obsidian://')) {
+        try {
+          const url = new URL(textData);
+          const filePath = url.searchParams.get('file');
+          if (filePath) {
+            const decodedPath = decodeURIComponent(filePath);
+            const absolutePath = this.app.vault.adapter.getFullPath(decodedPath);
+            this.proc.stdin?.write(`"${absolutePath}" `);
+            return;
+          }
+        } catch (err) {
+          console.error('Failed to parse obsidian URL:', err);
+        }
+      }
+      // Handle external file drops
+      const files = e.dataTransfer?.files;
+      if (files && files.length > 0) {
+        const { webUtils } = require('electron');
+        for (const file of files) {
+          const filePath = webUtils.getPathForFile(file);
+          if (filePath) {
+            this.proc.stdin?.write(`"${filePath}" `);
+          }
+        }
+      }
+    };
+    this.termHost.addEventListener('dragover', this.fileDragOverHandler);
+    this.termHost.addEventListener('drop', this.fileDropHandler);
     this.term.attachCustomKeyEventHandler((ev) => {
       // Shift+Enter: send Alt+Enter for multi-line input
       // Must block both keydown and keypress events to prevent xterm from sending normal Enter
@@ -7366,6 +7404,14 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.imagePasteHandler) {
       document.removeEventListener("paste", this.imagePasteHandler, true);
       this.imagePasteHandler = null;
+    }
+    if (this.fileDragOverHandler && this.termHost) {
+      this.termHost.removeEventListener('dragover', this.fileDragOverHandler);
+      this.fileDragOverHandler = null;
+    }
+    if (this.fileDropHandler && this.termHost) {
+      this.termHost.removeEventListener('drop', this.fileDropHandler);
+      this.fileDropHandler = null;
     }
     this.stopShell();
     this.term?.dispose();
