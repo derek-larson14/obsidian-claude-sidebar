@@ -7128,10 +7128,7 @@ var TerminalView = class extends import_obsidian.ItemView {
         }
       }
     });
-    this.waitForHostReady().then(() => {
-      this.fit();
-      setTimeout(() => this.fit(), 50);
-    });
+    this.ensureFitWithRetry();
     this.resizeObserver = new ResizeObserver(() => this.debouncedFit());
     this.resizeObserver.observe(this.termHost);
     // Watch for theme changes
@@ -7164,6 +7161,20 @@ var TerminalView = class extends import_obsidian.ItemView {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     return false;
+  }
+  async ensureFitWithRetry() {
+    for (let i = 0; i < 20; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      const dim = this.fitAddon?.proposeDimensions();
+      if (dim && dim.rows > 0) {
+        this.fit();
+        // If shell already running, send resize
+        if (this.proc && !this.proc.killed) {
+          this.proc.stdin?.write(`\x1b]RESIZE;${dim.cols};${dim.rows}\x07`);
+        }
+        return;
+      }
+    }
   }
   startShell() {
     this.stopShell();
@@ -7282,6 +7293,15 @@ var TerminalView = class extends import_obsidian.ItemView {
         this.proc.stdin?.write(`\x1b]RESIZE;${c};${r}\x07`);
       }
     });
+    // Safety: Verify dimensions after shell starts and send resize if needed
+    setTimeout(() => {
+      if (this.proc && !this.proc.killed && this.fitAddon) {
+        const currentDims = this.fitAddon.proposeDimensions();
+        if (currentDims && currentDims.rows > 0) {
+          this.proc.stdin?.write(`\x1b]RESIZE;${currentDims.cols};${currentDims.rows}\x07`);
+        }
+      }
+    }, 500);
     this.term?.focus();
     // Windows still needs auto-launch since we can't use exec there
     if (isWindows) {
