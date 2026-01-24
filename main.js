@@ -6729,6 +6729,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.lastStableScrollPos = 0;
     this.scrollLockUntil = 0;
     this.scrollRestoreTimeout = null;
+    // Custom working directory (set via folder context menu)
+    this.workingDir = null;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -6739,11 +6741,29 @@ var TerminalView = class extends import_obsidian.ItemView {
   getIcon() {
     return "bot";
   }
+  // Obsidian calls setState() with custom state from setViewState()
+  async setState(state, result) {
+    if (state?.workingDir) {
+      this.workingDir = state.workingDir;
+      // If shell already started, restart in new directory
+      if (this.proc) {
+        this.startShell(this.workingDir);
+      }
+    }
+  }
+  getState() {
+    return this.workingDir ? { workingDir: this.workingDir } : {};
+  }
   async onOpen() {
     this.injectCSS();
     this.buildUI();
     this.initTerminal();
-    this.startShell();
+    // Delay shell start slightly to allow setState() to be called first
+    setTimeout(() => {
+      if (!this.proc) {
+        this.startShell(this.workingDir);
+      }
+    }, 10);
     this.setupEscapeHandler();
   }
   setupEscapeHandler() {
@@ -7233,9 +7253,9 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
   }
-  startShell() {
+  startShell(workingDir = null) {
     this.stopShell();
-    const cwd = this.plugin.getVaultPath();
+    const cwd = workingDir || this.plugin.getVaultPath();
     const cols = this.term?.cols || 80;
     const rows = this.term?.rows || 24;
     const isWindows = process.platform === "win32";
@@ -7459,6 +7479,24 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       name: "Toggle Focus: Editor ↔ Claude",
       callback: () => this.toggleFocus()
     });
+
+    // Register folder context menu
+    this.registerEvent(
+      this.app.workspace.on('file-menu', (menu, file, source) => {
+        // Only show for folders, not files
+        if (file instanceof import_obsidian.TFolder) {
+          menu.addItem(item =>
+            item
+              .setTitle('Open Claude here')
+              .setIcon('bot')
+              .onClick(() => {
+                const absolutePath = this.app.vault.adapter.getFullPath(file.path);
+                this.createNewTab(absolutePath);
+              })
+          );
+        }
+      })
+    );
   }
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
@@ -7496,10 +7534,14 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
-  async createNewTab() {
+  async createNewTab(workingDir = null) {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
-      await leaf.setViewState({ type: VIEW_TYPE, active: true });
+      await leaf.setViewState({
+        type: VIEW_TYPE,
+        active: true,
+        state: workingDir ? { workingDir } : {}
+      });
       this.app.workspace.revealLeaf(leaf);
       // Focus the terminal after the leaf is revealed
       setTimeout(() => {
