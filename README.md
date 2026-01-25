@@ -11,6 +11,7 @@ Built by [Derek Larson](https://dtlarson.com) for [Delegate with Claude](https:/
 - **Embedded terminal** - Full terminal in your Obsidian sidebar
 - **Auto-launches Claude** - Claude Code starts automatically
 - **Multiple tabs** - Run multiple Claude instances side by side
+- **Folder context menu** - Right-click any folder to open Claude in that directory
 
 ## Requirements
 
