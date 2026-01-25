@@ -7058,20 +7058,19 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
     // Scroll position manager - prevents terminal jumping during Claude Code redraws
-    // Ink TUI and fit() calls can cause unwanted scroll position resets
+    // Ink TUI redraws can cause unwanted jumps to top; only block those, not legitimate scrolls
     this.term.onScroll((scrollPos) => {
       const now = Date.now();
       // If we're in a lock period, ignore scroll events
       if (now < this.scrollLockUntil) {
         return;
       }
-      // Detect suspicious jump: large sudden change in scroll position
-      // This catches both jumps to 0 AND jumps to other positions during reflows
-      const JUMP_THRESHOLD = 50; // lines - larger jumps are suspicious
+      // Only block jumps TOWARD THE TOP (position 0 or near it)
+      // Scrolling down toward new content should always be allowed
       const MINIMUM_SCROLL_POS = 10; // only protect if we had meaningful scroll history
-      const delta = Math.abs(scrollPos - this.lastStableScrollPos);
+      const isJumpToTop = scrollPos < 5 && this.lastStableScrollPos > MINIMUM_SCROLL_POS;
 
-      if (delta > JUMP_THRESHOLD && this.lastStableScrollPos > MINIMUM_SCROLL_POS) {
+      if (isJumpToTop) {
         // Clear any pending restore
         if (this.scrollRestoreTimeout) {
           clearTimeout(this.scrollRestoreTimeout);
