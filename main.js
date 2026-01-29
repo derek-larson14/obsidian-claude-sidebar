@@ -7589,7 +7589,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   }
   async sendTextToTerminal(text) {
     let leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
-    if (leaves.length === 0) {
+    const needsNewTab = leaves.length === 0;
+    if (needsNewTab) {
       await this.createNewTab();
       leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     }
@@ -7600,11 +7601,15 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
 
     if (!(view instanceof TerminalView)) return false;
 
-    // Wait for terminal to be ready (receive first output from Claude)
-    let attempts = 0;
-    while (!view.hasOutput && attempts < 100) {
-      await new Promise(r => setTimeout(r, 50));
-      attempts++;
+    if (needsNewTab) {
+      // Wait for process to start
+      let attempts = 0;
+      while ((!view.proc || !view.hasOutput) && attempts < 100) {
+        await new Promise(r => setTimeout(r, 50));
+        attempts++;
+      }
+      // Additional delay for Claude to fully initialize after first output
+      await new Promise(r => setTimeout(r, 1000));
     }
 
     if (!view.proc || view.proc.killed) return false;
