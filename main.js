@@ -6728,6 +6728,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Scroll position manager state
     this.lastStableScrollPos = 0;
     this.scrollLockUntil = 0;
+    // Terminal ready detection
+    this.hasOutput = false;
     this.scrollRestoreTimeout = null;
     // Custom working directory (set via folder context menu)
     this.workingDir = null;
@@ -7022,7 +7024,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     const bg = styles.getPropertyValue("--background-secondary").trim() || "#1e1e1e";
     const fg = styles.getPropertyValue("--text-normal").trim() || "#d4d4d4";
     const cursor = styles.getPropertyValue("--text-accent").trim() || "#ffffff";
-    return { background: bg, foreground: fg, cursor: cursor };
+    // Light mode needs a more visible selection color
+    const isLightMode = document.body.classList.contains("theme-light");
+    const selectionBackground = isLightMode ? "rgba(0, 100, 200, 0.3)" : undefined;
+    return { background: bg, foreground: fg, cursor, selectionBackground };
   }
   updateTheme() {
     if (!this.term) return;
@@ -7340,6 +7345,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.stdoutDecoder = new StringDecoder("utf8");
     this.stderrDecoder = new StringDecoder("utf8");
     this.proc.stdout?.on("data", (data) => {
+      this.hasOutput = true;
       this.term?.write(this.stdoutDecoder.write(data));
     });
     this.proc.stderr?.on("data", (data) => {
