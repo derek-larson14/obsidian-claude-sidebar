@@ -6725,12 +6725,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.focusOutHandler = null;
     this.stdoutDecoder = null;
     this.stderrDecoder = null;
-    // Scroll position manager state
-    this.lastStableScrollPos = 0;
-    this.scrollLockUntil = 0;
     // Terminal ready detection
     this.hasOutput = false;
-    this.scrollRestoreTimeout = null;
     // Custom working directory (set via folder context menu)
     this.workingDir = null;
   }
@@ -7062,38 +7058,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.term.open(this.termHost);
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
-    // Scroll position manager - prevents terminal jumping during Claude Code redraws
-    // Ink TUI redraws can cause unwanted jumps to top; only block those, not legitimate scrolls
-    this.term.onScroll((scrollPos) => {
-      const now = Date.now();
-      // If we're in a lock period, ignore scroll events
-      if (now < this.scrollLockUntil) {
-        return;
-      }
-      // Only block jumps TOWARD THE TOP (position 0 or near it)
-      // Scrolling down toward new content should always be allowed
-      const MINIMUM_SCROLL_POS = 10; // only protect if we had meaningful scroll history
-      const isJumpToTop = scrollPos < 5 && this.lastStableScrollPos > MINIMUM_SCROLL_POS;
-
-      if (isJumpToTop) {
-        // Clear any pending restore
-        if (this.scrollRestoreTimeout) {
-          clearTimeout(this.scrollRestoreTimeout);
-        }
-        // Lock scroll updates for 200ms to prevent conflicting updates
-        this.scrollLockUntil = now + 200;
-        // Restore after brief delay to let the redraw settle
-        this.scrollRestoreTimeout = setTimeout(() => {
-          if (this.term) {
-            this.term.scrollToLine(this.lastStableScrollPos);
-          }
-          this.scrollRestoreTimeout = null;
-        }, 50);
-      } else {
-        // Normal scroll - update stable position
-        this.lastStableScrollPos = scrollPos;
-      }
-    });
     // Handle image paste - use capture phase to intercept before xterm's textarea
     this.imagePasteHandler = async (e) => {
       // Only handle if terminal has focus
@@ -7206,22 +7170,9 @@ var TerminalView = class extends import_obsidian.ItemView {
   fit() {
     if (!this.term || !this.fitAddon) return;
     try {
-      // Save scroll state before fit - fit() can reset scroll position
-      const buffer = this.term.buffer.active;
-      const wasAtBottom = buffer.viewportY >= buffer.baseY;
-      const savedViewportY = buffer.viewportY;
-
       this.fitAddon.fit();
-
-      // Restore scroll position after fit settles
-      requestAnimationFrame(() => {
-        if (!this.term) return;
-        if (wasAtBottom) {
-          this.term.scrollToBottom();
-        } else {
-          this.term.scrollToLine(savedViewportY);
-        }
-      });
+      // Trust xterm's native scrollToBottom - it knows the correct position
+      this.term.scrollToBottom();
     } catch (e) {}
   }
   debouncedFit() {
@@ -7418,10 +7369,6 @@ var TerminalView = class extends import_obsidian.ItemView {
       clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
     }
-    if (this.scrollRestoreTimeout) {
-      clearTimeout(this.scrollRestoreTimeout);
-      this.scrollRestoreTimeout = null;
-    }
     if (this.escapeScope) {
       this.app.keymap.popScope(this.escapeScope);
       this.escapeScope = null;
@@ -7555,7 +7502,14 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
   }
   onunload() {
-    // Don't detach leaves - Obsidian manages leaf lifecycle during plugin updates
+    // Kill all terminal processes before unloading to prevent orphans
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      const view = leaf.view;
+      if (view instanceof TerminalView) {
+        view.stopShell();
+      }
+    }
   }
   getVaultPath() {
     const adapter = this.app.vault.adapter;
