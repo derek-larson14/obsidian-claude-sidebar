@@ -50,6 +50,7 @@ In your vault folder, run:
 cd .obsidian/plugins/claude-sidebar
 curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js
 curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json
+curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/styles.css
 ```
 
 Then restart Obsidian or disable/re-enable the plugin.
