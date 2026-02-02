@@ -2,7 +2,7 @@
 
 Run Claude Code in your Obsidian sidebar.
 
-Built by [Derek Larson](https://dtlarson.com) for [Delegate with Claude](https://delegatewithclaude.com).
+Built by [Derek Larson](https://dtlarson.com). [Pair with commands →](https://delegatewithclaude.com/commands)
 
 ![Claude Sidebar](screenshot-obsidian.png)
 
