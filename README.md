@@ -12,6 +12,7 @@ Built by [Derek Larson](https://dtlarson.com) for [Delegate with Claude](https:/
 - **Auto-launches Claude** - Claude Code starts automatically
 - **Multiple tabs** - Run multiple Claude instances side by side
 - **Folder context menu** - Right-click any folder to open Claude in that directory
+- **YOLO mode** - Launch Claude with `--dangerously-skip-permissions` via right-click menus
 
 ## Requirements
 
@@ -60,6 +61,8 @@ Then restart Obsidian or disable/re-enable the plugin.
 https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 
 - Click the bot icon in the left ribbon to open Claude
+- Right-click the bot icon for YOLO mode (`--dangerously-skip-permissions`)
+- Right-click any folder for "Open Claude here" or "Open Claude here (YOLO)"
 - Use Command Palette (`Cmd+P`) for:
   - **Open Claude Code** - Open or focus Claude panel
   - **New Claude Tab** - Open additional Claude instance

@@ -6729,6 +6729,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.hasOutput = false;
     // Custom working directory (set via folder context menu)
     this.workingDir = null;
+    // YOLO mode (--dangerously-skip-permissions)
+    this.yoloMode = false;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -6743,14 +6745,20 @@ var TerminalView = class extends import_obsidian.ItemView {
   async setState(state, result) {
     if (state?.workingDir) {
       this.workingDir = state.workingDir;
-      // If shell already started, restart in new directory
-      if (this.proc) {
-        this.startShell(this.workingDir);
-      }
+    }
+    if (state?.yoloMode) {
+      this.yoloMode = state.yoloMode;
+    }
+    // If shell already started, restart with new settings
+    if (this.proc && (state?.workingDir || state?.yoloMode)) {
+      this.startShell(this.workingDir, this.yoloMode);
     }
   }
   getState() {
-    return this.workingDir ? { workingDir: this.workingDir } : {};
+    const state = {};
+    if (this.workingDir) state.workingDir = this.workingDir;
+    if (this.yoloMode) state.yoloMode = this.yoloMode;
+    return state;
   }
   async onOpen() {
     this.injectCSS();
@@ -6759,7 +6767,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Delay shell start slightly to allow setState() to be called first
     setTimeout(() => {
       if (!this.proc) {
-        this.startShell(this.workingDir);
+        this.startShell(this.workingDir, this.yoloMode);
       }
     }, 10);
     this.setupEscapeHandler();
@@ -7208,7 +7216,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
   }
-  startShell(workingDir = null) {
+  startShell(workingDir = null, yoloMode = false) {
     this.stopShell();
     const cwd = workingDir || this.plugin.getVaultPath();
     const cols = this.term?.cols || 80;
@@ -7258,9 +7266,10 @@ var TerminalView = class extends import_obsidian.ItemView {
         cmd = "python";
       }
     }
+    const claudeCmd = yoloMode ? "claude --dangerously-skip-permissions" : "claude";
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
-      : [ptyPath, String(cols), String(rows), shell, "-lc", "claude || true; exec $SHELL -i"];
+      : [ptyPath, String(cols), String(rows), shell, "-lc", `${claudeCmd} || true; exec $SHELL -i`];
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
     let shellEnv = { ...process.env, TERM: "xterm-256color" };
@@ -7340,7 +7349,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (isWindows) {
       setTimeout(() => {
         if (this.proc && !this.proc.killed) {
-          this.proc.stdin?.write('claude\r');
+          const winCmd = yoloMode ? 'claude --dangerously-skip-permissions\r' : 'claude\r';
+          this.proc.stdin?.write(winCmd);
         }
       }, 1000);
     }
@@ -7398,11 +7408,27 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   }
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
-    this.addRibbonIcon("bot", "New Claude Tab", () => {
+    const ribbonIcon = this.addRibbonIcon("bot", "New Claude Tab", () => {
       const now = Date.now();
       if (now - this.lastRibbonClick < 1500) return; // 1.5s throttle to prevent accidental double-clicks
       this.lastRibbonClick = now;
       this.createNewTab();
+    });
+    // Right-click context menu for YOLO mode
+    ribbonIcon.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      const menu = new import_obsidian.Menu();
+      menu.addItem((item) => {
+        item.setTitle("Open in YOLO mode")
+          .setIcon("zap")
+          .onClick(() => {
+            const now = Date.now();
+            if (now - this.lastRibbonClick < 1500) return;
+            this.lastRibbonClick = now;
+            this.createNewTab(null, true);
+          });
+      });
+      menu.showAtMouseEvent(e);
     });
     this.addCommand({
       id: "open-claude",
@@ -7476,6 +7502,15 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
                 this.createNewTab(absolutePath);
               })
           );
+          menu.addItem(item =>
+            item
+              .setTitle('Open Claude here (YOLO)')
+              .setIcon('zap')
+              .onClick(() => {
+                const absolutePath = this.app.vault.adapter.getFullPath(file.path);
+                this.createNewTab(absolutePath, true);
+              })
+          );
         }
       })
     );
@@ -7523,13 +7558,16 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
-  async createNewTab(workingDir = null) {
+  async createNewTab(workingDir = null, yoloMode = false) {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
+      const state = {};
+      if (workingDir) state.workingDir = workingDir;
+      if (yoloMode) state.yoloMode = yoloMode;
       await leaf.setViewState({
         type: VIEW_TYPE,
         active: true,
-        state: workingDir ? { workingDir } : {}
+        state
       });
       this.app.workspace.revealLeaf(leaf);
       // Focus the terminal after the leaf is revealed
