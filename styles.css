@@ -42,14 +42,14 @@
 	scrollbar-gutter: stable;
 }
 
-/* Keep the hidden textarea from stealing layout/focus scroll */
+/* IME support: keep textarea positioned near cursor for input method candidate window */
 .vault-terminal-host .xterm .xterm-helper-textarea {
-	position: fixed !important;
-	left: -10000px !important;
-	top: 0 !important;
-	width: 0 !important;
-	height: 0 !important;
+	/* Allow xterm.js to position the textarea for IME support */
+	/* The textarea must remain in the document flow for IME candidate window positioning */
 	opacity: 0 !important;
-	overflow: hidden !important;
-	clip: rect(0 0 0 0) !important;
+	border: 0 !important;
+	padding: 0 !important;
+	outline: none !important;
+	/* Prevent textarea from affecting layout while keeping it positioned correctly */
+	pointer-events: none;
 }
