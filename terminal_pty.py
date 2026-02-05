@@ -8,6 +8,7 @@ import fcntl
 import termios
 import select
 import signal
+import time
 
 # Global to track child PID (also the process group ID) for signal handler
 child_pid = None
@@ -26,7 +27,6 @@ def cleanup_child(signum, frame):
         # Kill entire process group (child is group leader)
         kill_process_group(child_pid, signal.SIGTERM)
         # Give processes a moment to exit gracefully
-        import time
         for _ in range(10):
             try:
                 pid, _ = os.waitpid(-child_pid, os.WNOHANG)
@@ -58,6 +58,10 @@ def main():
     shell = sys.argv[3]
     shell_args = sys.argv[3:]  # Include shell as argv[0]
 
+    # Register signal handlers for cleanup BEFORE fork to avoid race condition
+    signal.signal(signal.SIGTERM, cleanup_child)
+    signal.signal(signal.SIGINT, cleanup_child)
+
     pid, fd = pty.fork()
     child_pid = pid  # Store for signal handler
 
@@ -69,9 +73,6 @@ def main():
         sys.exit(1)
 
     # Parent process
-    # Register signal handlers to clean up child on termination
-    signal.signal(signal.SIGTERM, cleanup_child)
-    signal.signal(signal.SIGHUP, cleanup_child)
 
     # Set initial size
     set_size(fd, cols, rows)
@@ -139,7 +140,6 @@ def main():
         fcntl.fcntl(stdin_fd, fcntl.F_SETFL, old_flags)
         # Ensure entire process group is terminated when we exit
         if child_pid:
-            import time
             kill_process_group(child_pid, signal.SIGTERM)
             for _ in range(10):
                 try:
