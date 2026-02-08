@@ -6749,15 +6749,19 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (state?.yoloMode) {
       this.yoloMode = state.yoloMode;
     }
+    if (state?.continueSession) {
+      this.continueSession = state.continueSession;
+    }
     // If shell already started, restart with new settings
-    if (this.proc && (state?.workingDir || state?.yoloMode)) {
-      this.startShell(this.workingDir, this.yoloMode);
+    if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession)) {
+      this.startShell(this.workingDir, this.yoloMode, this.continueSession);
     }
   }
   getState() {
     const state = {};
     if (this.workingDir) state.workingDir = this.workingDir;
     if (this.yoloMode) state.yoloMode = this.yoloMode;
+    // Don't persist continueSession — it's a one-time action
     return state;
   }
   async onOpen() {
@@ -6767,7 +6771,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Delay shell start slightly to allow setState() to be called first
     setTimeout(() => {
       if (!this.proc) {
-        this.startShell(this.workingDir, this.yoloMode);
+        this.startShell(this.workingDir, this.yoloMode, this.continueSession);
       }
     }, 10);
     this.setupEscapeHandler();
@@ -7216,9 +7220,12 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
   }
-  startShell(workingDir = null, yoloMode = false) {
+  startShell(workingDir = null, yoloMode = false, continueSession = false) {
     this.stopShell();
     const cwd = workingDir || this.plugin.getVaultPath();
+    // Persist last working directory for resume
+    this.plugin.pluginData.lastCwd = cwd;
+    this.plugin.saveData(this.plugin.pluginData);
     const cols = this.term?.cols || 80;
     const rows = this.term?.rows || 24;
     const isWindows = process.platform === "win32";
@@ -7266,10 +7273,16 @@ var TerminalView = class extends import_obsidian.ItemView {
         cmd = "python";
       }
     }
-    const claudeCmd = yoloMode ? "claude --dangerously-skip-permissions" : "claude";
+    let claudeCmd = "claude";
+    if (yoloMode) claudeCmd += " --dangerously-skip-permissions";
+    let baseClaude = claudeCmd;
+    if (continueSession) claudeCmd += " --continue";
+    const shellCmd = continueSession
+      ? `${claudeCmd} || ${baseClaude} || true; exec $SHELL -i`
+      : `${claudeCmd} || true; exec $SHELL -i`;
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
-      : [ptyPath, String(cols), String(rows), shell, "-lc", `${claudeCmd} || true; exec $SHELL -i`];
+      : [ptyPath, String(cols), String(rows), shell, "-lc", shellCmd];
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
     let shellEnv = { ...process.env, TERM: "xterm-256color" };
@@ -7405,8 +7418,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
     this.lastRibbonClick = 0;
+    this.pluginData = {};
   }
   async onload() {
+    this.pluginData = await this.loadData() || {};
+
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     const ribbonIcon = this.addRibbonIcon("bot", "New Claude Tab", () => {
       const now = Date.now();
@@ -7414,7 +7430,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       this.lastRibbonClick = now;
       this.createNewTab();
     });
-    // Right-click context menu for YOLO mode
+    // Right-click context menu
     ribbonIcon.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const menu = new import_obsidian.Menu();
@@ -7426,6 +7442,34 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
             if (now - this.lastRibbonClick < 1500) return;
             this.lastRibbonClick = now;
             this.createNewTab(null, true);
+          });
+      });
+      menu.addItem((item) => {
+        item.setTitle("Run from active folder")
+          .setIcon("folder-open")
+          .onClick(() => {
+            const now = Date.now();
+            if (now - this.lastRibbonClick < 1500) return;
+            this.lastRibbonClick = now;
+            const file = this.app.workspace.getActiveFile();
+            let dir = null;
+            if (file) {
+              const vaultPath = this.getVaultPath();
+              const parentPath = file.parent ? file.parent.path : "";
+              dir = parentPath ? `${vaultPath}/${parentPath}` : vaultPath;
+            }
+            this.createNewTab(dir);
+          });
+      });
+      menu.addItem((item) => {
+        item.setTitle("Resume last conversation")
+          .setIcon("history")
+          .onClick(() => {
+            const now = Date.now();
+            if (now - this.lastRibbonClick < 1500) return;
+            this.lastRibbonClick = now;
+            const lastCwd = this.pluginData.lastCwd || null;
+            this.createNewTab(lastCwd, false, true);
           });
       });
       menu.showAtMouseEvent(e);
@@ -7485,6 +7529,29 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
           this.sendTextToTerminal(selection);
         }
         return true;
+      }
+    });
+
+    this.addCommand({
+      id: "run-claude-from-folder",
+      name: "Run Claude from this folder",
+      callback: () => {
+        const file = this.app.workspace.getActiveFile();
+        let dir = null;
+        if (file) {
+          const vaultPath = this.getVaultPath();
+          const parentPath = file.parent ? file.parent.path : "";
+          dir = parentPath ? `${vaultPath}/${parentPath}` : vaultPath;
+        }
+        this.createNewTab(dir);
+      }
+    });
+    this.addCommand({
+      id: "resume-claude",
+      name: "Resume last conversation",
+      callback: () => {
+        const lastCwd = this.pluginData.lastCwd || null;
+        this.createNewTab(lastCwd, false, true);
       }
     });
 
@@ -7558,12 +7625,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
-  async createNewTab(workingDir = null, yoloMode = false) {
+  async createNewTab(workingDir = null, yoloMode = false, continueSession = false) {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
       const state = {};
       if (workingDir) state.workingDir = workingDir;
       if (yoloMode) state.yoloMode = yoloMode;
+      if (continueSession) state.continueSession = continueSession;
       await leaf.setViewState({
         type: VIEW_TYPE,
         active: true,

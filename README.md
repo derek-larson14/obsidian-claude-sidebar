@@ -61,13 +61,14 @@ Then restart Obsidian or disable/re-enable the plugin.
 https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 
 - Click the bot icon in the left ribbon to open Claude
-- Right-click the bot icon for YOLO mode (`--dangerously-skip-permissions`)
+- Right-click the bot icon for YOLO mode, folder targeting, or resuming a conversation
 - Right-click any folder for "Open Claude here" or "Open Claude here (YOLO)"
-- Use Command Palette (`Cmd+P`) for:
-  - **Open Claude Code** - Open or focus Claude panel
-  - **New Claude Tab** - Open additional Claude instance
-  - **Close Claude Tab** - Close current Claude tab (when focused)
+- Use Command Palette (`Cmd+P`) for all commands:
+  - **Open Claude Code** / **New Claude Tab** / **Close Claude Tab**
   - **Toggle Focus: Editor ↔ Claude** - Quick switch between editor and Claude
+  - **Run Claude from this folder** - Start Claude in the active file's directory
+  - **Resume last conversation** - Pick up where you left off (`--continue`)
+  - **Send File Path to Claude** / **Send Selection to Claude**
 - Press `Shift+Enter` for multi-line input
 - Set your own hotkeys in Settings → Hotkeys
 
