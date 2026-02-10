@@ -7182,9 +7182,13 @@ var TerminalView = class extends import_obsidian.ItemView {
   fit() {
     if (!this.term || !this.fitAddon) return;
     try {
+      // Check if terminal is at bottom before resize
+      const wasAtBottom = this.term.buffer.active.baseY === this.term.buffer.active.viewportY;
       this.fitAddon.fit();
-      // Trust xterm's native scrollToBottom - it knows the correct position
-      this.term.scrollToBottom();
+      // Only auto-scroll if we were already at bottom
+      if (wasAtBottom) {
+        this.term.scrollToBottom();
+      }
     } catch (e) {}
   }
   debouncedFit() {
@@ -7319,7 +7323,16 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.stderrDecoder = new StringDecoder("utf8");
     this.proc.stdout?.on("data", (data) => {
       this.hasOutput = true;
-      this.term?.write(this.stdoutDecoder.write(data));
+      if (this.term) {
+        // Check if near bottom (within 3 lines) before write
+        const buffer = this.term.buffer.active;
+        const nearBottom = buffer.baseY - buffer.viewportY <= 3;
+        this.term.write(this.stdoutDecoder.write(data));
+        // Snap back to bottom if we were near bottom
+        if (nearBottom && buffer.baseY !== buffer.viewportY) {
+          this.term.scrollToBottom();
+        }
+      }
     });
     this.proc.stderr?.on("data", (data) => {
       this.term?.write(this.stderrDecoder.write(data));
@@ -7483,6 +7496,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       id: "new-claude-tab",
       name: "New Claude Tab",
       callback: () => this.createNewTab()
+    });
+    this.addCommand({
+      id: "new-claude-tab-yolo",
+      name: "New Claude Tab (YOLO mode)",
+      callback: () => this.createNewTab(null, true)
     });
     this.addCommand({
       id: "close-claude-tab",
