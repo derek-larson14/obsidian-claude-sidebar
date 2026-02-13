@@ -7324,12 +7324,12 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.proc.stdout?.on("data", (data) => {
       this.hasOutput = true;
       if (this.term) {
-        // Check if near bottom (within 3 lines) before write
+        // Check if at exact bottom before write
         const buffer = this.term.buffer.active;
-        const nearBottom = buffer.baseY - buffer.viewportY <= 3;
+        const atBottom = buffer.baseY === buffer.viewportY;
         this.term.write(this.stdoutDecoder.write(data));
-        // Snap back to bottom if we were near bottom
-        if (nearBottom && buffer.baseY !== buffer.viewportY) {
+        // Only auto-scroll if we were at exact bottom
+        if (atBottom) {
           this.term.scrollToBottom();
         }
       }
