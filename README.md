@@ -46,6 +46,12 @@ Once approved, you'll be able to search for "Claude Sidebar" in Community Plugin
 
 ## Updating
 
+Paste into a Claude Code session from your vault:
+
+> Update the Claude Sidebar plugin. Download main.js, manifest.json, and styles.css from https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/ into .obsidian/plugins/claude-sidebar/. Tell me the old and new version numbers.
+
+### Manual
+
 In your vault folder, run:
 ```bash
 cd .obsidian/plugins/claude-sidebar
