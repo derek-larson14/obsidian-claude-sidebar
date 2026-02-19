@@ -117,6 +117,79 @@ The PTY scripts (`terminal_pty.py` for Unix, `terminal_win.py` for Windows) are 
 ./build.sh
 ```
 
+## Claude Code Active Note Context
+
+When Claude Code runs in the sidebar, it can automatically see which note you have open
+in Obsidian. This uses a lightweight hook that queries the Obsidian CLI on each message.
+
+### Requirements
+
+- Obsidian v1.12+ (CLI support, Early Access)
+
+### Option A: Install as Claude Code Plugin
+
+Register this repo as a Claude Code marketplace and install the plugin:
+
+```bash
+# Register marketplace (one time)
+/plugin marketplace add obsidian-claude-sidebar /path/to/obsidian-claude-sidebar
+
+# Install the plugin
+/plugin install claude-sidebar@obsidian-claude-sidebar
+```
+
+This adds a global hook — the active note context appears in every Claude session
+when Obsidian is running.
+
+### Option B: Per-Vault Setup (project-level)
+
+Run the setup script from your vault root:
+
+```bash
+/path/to/obsidian-claude-sidebar/setup-claude-context.sh
+```
+
+Or use the slash command after installing the plugin:
+
+```
+/claude-sidebar:setup-vault
+```
+
+This creates a `.claude/` directory in your vault with project-level hooks that
+only fire when Claude's working directory is this vault.
+
+### Status Line
+
+The per-vault setup also configures a custom status line that shows the active note name
+at the bottom of Claude Code. To add it manually to your global settings:
+
+```json
+{
+  "statusLine": {
+    "type": "command",
+    "command": "/path/to/obsidian-claude-sidebar/statusline/obsidian-statusline.sh"
+  }
+}
+```
+
+### Output Style
+
+The plugin includes an `obsidian-vault` output style that teaches Claude about Obsidian
+markdown syntax (wiki-links, callouts, frontmatter, embeds) and the Obsidian CLI commands.
+Activate it with:
+
+```
+/output-style obsidian-vault
+```
+
+### How It Works
+
+1. A `UserPromptSubmit` hook runs `obsidian file` on every message
+2. If Obsidian is running, it injects the active note's metadata as context
+3. Claude can then use `obsidian read active` to read the full note content
+4. The status line shows the active note name persistently at the bottom
+5. If Obsidian is not running, everything exits silently (zero overhead)
+
 ## Contributing
 
 Issues and PRs welcome at [github.com/derek-larson14/obsidian-claude-sidebar](https://github.com/derek-larson14/obsidian-claude-sidebar)

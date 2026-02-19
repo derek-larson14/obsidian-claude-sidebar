@@ -1,0 +1,6 @@
+{
+  "name": "claude-sidebar",
+  "version": "1.1.0",
+  "description": "Injects the active Obsidian note into Claude Code context via the Obsidian CLI (v1.12+).",
+  "outputStyles": "./output-styles/"
+}
