@@ -158,20 +158,6 @@ Or use the slash command after installing the plugin:
 This creates a `.claude/` directory in your vault with project-level hooks that
 only fire when Claude's working directory is this vault.
 
-### Status Line
-
-The per-vault setup also configures a custom status line that shows the active note name
-at the bottom of Claude Code. To add it manually to your global settings:
-
-```json
-{
-  "statusLine": {
-    "type": "command",
-    "command": "/path/to/obsidian-claude-sidebar/statusline/obsidian-statusline.sh"
-  }
-}
-```
-
 ### Output Style
 
 The plugin includes an `obsidian-vault` output style that teaches Claude about Obsidian
@@ -187,8 +173,7 @@ Activate it with:
 1. A `UserPromptSubmit` hook runs `obsidian file` on every message
 2. If Obsidian is running, it injects the active note's metadata as context
 3. Claude can then use `obsidian read active` to read the full note content
-4. The status line shows the active note name persistently at the bottom
-5. If Obsidian is not running, everything exits silently (zero overhead)
+4. If Obsidian is not running, everything exits silently (zero overhead)
 
 ## Contributing
 

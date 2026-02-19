@@ -18,7 +18,7 @@ fi
 
 echo "Setting up Claude Code integration in: $VAULT_DIR"
 
-mkdir -p "$VAULT_DIR/.claude/hooks" "$VAULT_DIR/.claude/statusline"
+mkdir -p "$VAULT_DIR/.claude/hooks"
 
 # Write hook script
 cat > "$VAULT_DIR/.claude/hooks/obsidian-active-note.sh" << 'HOOKSCRIPT'
@@ -38,38 +38,6 @@ EOF
 HOOKSCRIPT
 chmod +x "$VAULT_DIR/.claude/hooks/obsidian-active-note.sh"
 
-# Write status line script
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-if [ -f "$SCRIPT_DIR/statusline/obsidian-statusline.sh" ]; then
-  cp "$SCRIPT_DIR/statusline/obsidian-statusline.sh" "$VAULT_DIR/.claude/statusline/"
-else
-  # Inline fallback if running without the repo
-  cat > "$VAULT_DIR/.claude/statusline/obsidian-statusline.sh" << 'STATUSLINE'
-#!/bin/bash
-input=$(cat)
-MODEL=$(echo "$input" | jq -r '.model.display_name')
-PCT=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
-COST=$(printf '$%.2f' "$(echo "$input" | jq -r '.cost.total_cost_usd // 0')")
-NOTE=""
-if pgrep -xq "Obsidian"; then
-  CLI="/Applications/Obsidian.app/Contents/MacOS/obsidian"
-  command -v obsidian &>/dev/null && CLI="obsidian"
-  CACHE="/tmp/obsidian-statusline-cache"
-  if [ ! -f "$CACHE" ] || [ $(($(date +%s) - $(stat -f %m "$CACHE" 2>/dev/null || echo 0))) -gt 2 ]; then
-    "$CLI" file 2>/dev/null | head -1 | sed 's/.*name[[:space:]]*//' > "$CACHE"
-  fi
-  NOTE=$(cat "$CACHE")
-fi
-DIM='\033[2m'; RESET='\033[0m'
-if [ -n "$NOTE" ]; then
-  printf '%b' "${DIM}[$MODEL]${RESET} ${NOTE} | ${PCT}%% | ${DIM}${COST}${RESET}\n"
-else
-  printf '%b' "${DIM}[$MODEL]${RESET} ${PCT}%% | ${DIM}${COST}${RESET}\n"
-fi
-STATUSLINE
-fi
-chmod +x "$VAULT_DIR/.claude/statusline/obsidian-statusline.sh"
-
 # Write project-level settings
 cat > "$VAULT_DIR/.claude/settings.local.json" << 'SETTINGS'
 {
@@ -84,10 +52,6 @@ cat > "$VAULT_DIR/.claude/settings.local.json" << 'SETTINGS'
         ]
       }
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/statusline/obsidian-statusline.sh"
   }
 }
 SETTINGS

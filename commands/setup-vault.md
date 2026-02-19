@@ -36,10 +36,7 @@ To interact with this note, use the Obsidian CLI:
 EOF
 ```
 
-4. Copy the status line script to `.claude/statusline/obsidian-statusline.sh` and make it executable.
-   Use the same content as the plugin's `statusline/obsidian-statusline.sh`.
-
-5. Write `.claude/settings.local.json`:
+4. Write `.claude/settings.local.json`:
 
 ```json
 {
@@ -54,10 +51,6 @@ EOF
         ]
       }
     ]
-  },
-  "statusLine": {
-    "type": "command",
-    "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/statusline/obsidian-statusline.sh"
   }
 }
 ```
