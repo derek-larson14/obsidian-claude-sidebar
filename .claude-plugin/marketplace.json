@@ -1,0 +1,19 @@
+{
+  "name": "obsidian-claude-sidebar",
+  "owner": {
+    "name": "derek-larson14"
+  },
+  "metadata": {
+    "description": "Claude Code sidebar for Obsidian with active note context integration",
+    "version": "1.1.0"
+  },
+  "plugins": [
+    {
+      "name": "claude-sidebar",
+      "source": "./",
+      "description": "Injects the active Obsidian note into Claude Code context via hooks and the Obsidian CLI.",
+      "version": "1.1.0",
+      "keywords": ["obsidian", "notes", "context", "vault", "active-note"]
+    }
+  ]
+}
