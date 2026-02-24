@@ -86,6 +86,8 @@ https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 | Linux | ✅ Supported |
 | Windows | ⚠️ Experimental |
 
+Want to use it on iOS or Android? See [Claude Anywhere](https://github.com/derek-larson14/claude-anywhere).
+
 ### Windows Setup (Experimental)
 
 Windows requires additional dependencies:
