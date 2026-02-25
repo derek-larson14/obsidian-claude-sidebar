@@ -6706,6 +6706,40 @@ var path = __toESM(require("path"));
 var fs = __toESM(require("fs"));
 var { StringDecoder } = require("string_decoder");
 var VIEW_TYPE = "vault-terminal";
+var CLI_BACKENDS = {
+  claude: {
+    label: "Claude Code",
+    binary: "claude",
+    pathHints: ["~/.local/bin"],
+    yoloFlag: "--dangerously-skip-permissions",
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
+  codex: {
+    label: "Codex",
+    binary: "codex",
+    pathHints: [],
+    yoloFlag: "--yolo",
+    resumeFlag: "resume --last",
+    resumeIsSubcommand: true,
+  },
+  opencode: {
+    label: "OpenCode",
+    binary: "opencode",
+    pathHints: ["/opt/homebrew/bin"],
+    yoloFlag: null,
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
+  gemini: {
+    label: "Gemini CLI",
+    binary: "gemini",
+    pathHints: [],
+    yoloFlag: "--approval-mode=yolo",
+    resumeFlag: "--resume",
+    resumeIsSubcommand: false,
+  },
+};
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -6731,6 +6765,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.workingDir = null;
     // YOLO mode (--dangerously-skip-permissions)
     this.yoloMode = false;
+  }
+  getBackend() {
+    const key = this.plugin.pluginData.cliBackend || "claude";
+    return CLI_BACKENDS[key] || CLI_BACKENDS.claude;
   }
   getViewType() {
     return VIEW_TYPE;
@@ -7226,7 +7264,10 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   startShell(workingDir = null, yoloMode = false, continueSession = false) {
     this.stopShell();
-    const cwd = workingDir || this.plugin.getVaultPath();
+    const defaultDir = this.plugin.pluginData.defaultWorkingDir;
+    const vaultPath = this.plugin.getVaultPath();
+    const resolvedDefault = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
+    const cwd = workingDir || resolvedDefault;
     // Persist last working directory for resume
     this.plugin.pluginData.lastCwd = cwd;
     this.plugin.saveData(this.plugin.pluginData);
@@ -7277,13 +7318,24 @@ var TerminalView = class extends import_obsidian.ItemView {
         cmd = "python";
       }
     }
-    let claudeCmd = "claude";
-    if (yoloMode) claudeCmd += " --dangerously-skip-permissions";
-    let baseClaude = claudeCmd;
-    if (continueSession) claudeCmd += " --continue";
+    const backend = this.getBackend();
+    let cliCmd = backend.binary;
+    if (yoloMode && backend.yoloFlag) cliCmd += " " + backend.yoloFlag;
+    const additionalFlags = this.plugin.pluginData.additionalFlags;
+    if (additionalFlags) cliCmd += " " + additionalFlags;
+    let baseCmd = cliCmd;
+    if (continueSession && backend.resumeFlag) {
+      if (backend.resumeIsSubcommand) {
+        // e.g. "codex resume --last" — replace the whole command
+        cliCmd = backend.binary + " " + backend.resumeFlag;
+        if (additionalFlags) cliCmd += " " + additionalFlags;
+      } else {
+        cliCmd += " " + backend.resumeFlag;
+      }
+    }
     const shellCmd = continueSession
-      ? `${claudeCmd} || ${baseClaude} || true; exec $SHELL -i`
-      : `${claudeCmd} || true; exec $SHELL -i`;
+      ? `${cliCmd} || ${baseCmd} || true; exec $SHELL -i`
+      : `${cliCmd} || true; exec $SHELL -i`;
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
       : [ptyPath, String(cols), String(rows), shell, "-lc", shellCmd];
@@ -7304,11 +7356,13 @@ var TerminalView = class extends import_obsidian.ItemView {
       } catch (e) {
         // Fall back to process.env.PATH if shell init fails
       }
-      // Ensure ~/.local/bin is in PATH for Claude Code (official installer location)
+      // Ensure backend-specific paths are available
       const homeDir = process.env.HOME || '';
-      const localBin = `${homeDir}/.local/bin`;
-      if (homeDir && shellEnv.PATH && !shellEnv.PATH.includes(localBin)) {
-        shellEnv.PATH = `${localBin}:${shellEnv.PATH}`;
+      const pathHints = (backend.pathHints || []).map(p => p.replace('~', homeDir));
+      for (const hint of pathHints) {
+        if (hint && shellEnv.PATH && !shellEnv.PATH.includes(hint)) {
+          shellEnv.PATH = `${hint}:${shellEnv.PATH}`;
+        }
       }
     }
 
@@ -7375,8 +7429,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (isWindows) {
       setTimeout(() => {
         if (this.proc && !this.proc.killed) {
-          const winCmd = yoloMode ? 'claude --dangerously-skip-permissions\r' : 'claude\r';
-          this.proc.stdin?.write(winCmd);
+          let winCmd = backend.binary;
+          if (yoloMode && backend.yoloFlag) winCmd += ' ' + backend.yoloFlag;
+          this.proc.stdin?.write(winCmd + '\r');
         }
       }, 1000);
     }
@@ -7427,6 +7482,49 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.fitAddon = null;
   }
 };
+var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    new import_obsidian.Setting(containerEl)
+      .setName("CLI backend")
+      .setDesc("Which coding agent CLI to run in the sidebar.")
+      .addDropdown(drop => {
+        for (const [key, backend] of Object.entries(CLI_BACKENDS)) {
+          drop.addOption(key, backend.label);
+        }
+        drop.setValue(this.plugin.pluginData.cliBackend || "claude");
+        drop.onChange(async (value) => {
+          this.plugin.pluginData.cliBackend = value;
+          await this.plugin.saveData(this.plugin.pluginData);
+        });
+      });
+    new import_obsidian.Setting(containerEl)
+      .setName("Default working directory")
+      .setDesc("Path where the CLI opens by default. Absolute path, or relative to vault root (e.g. '..' opens one level up). Leave empty to use the vault root.")
+      .addText(text => text
+        .setPlaceholder("e.g. /Users/you/project  or  ..")
+        .setValue(this.plugin.pluginData.defaultWorkingDir || "")
+        .onChange(async (value) => {
+          this.plugin.pluginData.defaultWorkingDir = value.trim() || null;
+          await this.plugin.saveData(this.plugin.pluginData);
+        }));
+    new import_obsidian.Setting(containerEl)
+      .setName("Additional CLI flags")
+      .setDesc("Extra flags appended to the CLI command. Applied to every session.")
+      .addText(text => text
+        .setPlaceholder("e.g. --model claude-opus-4-6")
+        .setValue(this.plugin.pluginData.additionalFlags || "")
+        .onChange(async (value) => {
+          this.plugin.pluginData.additionalFlags = value.trim() || null;
+          await this.plugin.saveData(this.plugin.pluginData);
+        }));
+  }
+};
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   constructor() {
     super(...arguments);
@@ -7447,16 +7545,19 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     ribbonIcon.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const menu = new import_obsidian.Menu();
-      menu.addItem((item) => {
-        item.setTitle("Open in YOLO mode")
-          .setIcon("zap")
-          .onClick(() => {
-            const now = Date.now();
-            if (now - this.lastRibbonClick < 1500) return;
-            this.lastRibbonClick = now;
-            this.createNewTab(null, true);
-          });
-      });
+      const activeBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+      if (activeBackend.yoloFlag) {
+        menu.addItem((item) => {
+          item.setTitle("Open in YOLO mode")
+            .setIcon("zap")
+            .onClick(() => {
+              const now = Date.now();
+              if (now - this.lastRibbonClick < 1500) return;
+              this.lastRibbonClick = now;
+              this.createNewTab(null, true);
+            });
+        });
+      }
       menu.addItem((item) => {
         item.setTitle("Run from active folder")
           .setIcon("folder-open")
@@ -7474,17 +7575,19 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
             this.createNewTab(dir);
           });
       });
-      menu.addItem((item) => {
-        item.setTitle("Resume last conversation")
-          .setIcon("history")
-          .onClick(() => {
-            const now = Date.now();
-            if (now - this.lastRibbonClick < 1500) return;
-            this.lastRibbonClick = now;
-            const lastCwd = this.pluginData.lastCwd || null;
-            this.createNewTab(lastCwd, false, true);
-          });
-      });
+      if (activeBackend.resumeFlag) {
+        menu.addItem((item) => {
+          item.setTitle("Resume last conversation")
+            .setIcon("history")
+            .onClick(() => {
+              const now = Date.now();
+              if (now - this.lastRibbonClick < 1500) return;
+              this.lastRibbonClick = now;
+              const lastCwd = this.pluginData.lastCwd || null;
+              this.createNewTab(lastCwd, false, true);
+            });
+        });
+      }
       menu.showAtMouseEvent(e);
     });
     this.addCommand({
@@ -7499,8 +7602,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "new-claude-tab-yolo",
-      name: "New Claude Tab (YOLO mode)",
-      callback: () => this.createNewTab(null, true)
+      name: "New Tab (YOLO mode)",
+      checkCallback: (checking) => {
+        const backend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+        if (!backend?.yoloFlag) return false;
+        if (!checking) this.createNewTab(null, true);
+        return true;
+      }
     });
     this.addCommand({
       id: "close-claude-tab",
@@ -7567,9 +7675,14 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.addCommand({
       id: "resume-claude",
       name: "Resume last conversation",
-      callback: () => {
-        const lastCwd = this.pluginData.lastCwd || null;
-        this.createNewTab(lastCwd, false, true);
+      checkCallback: (checking) => {
+        const backend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+        if (!backend?.resumeFlag) return false;
+        if (!checking) {
+          const lastCwd = this.pluginData.lastCwd || null;
+          this.createNewTab(lastCwd, false, true);
+        }
+        return true;
       }
     });
 
@@ -7587,18 +7700,22 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
                 this.createNewTab(absolutePath);
               })
           );
-          menu.addItem(item =>
-            item
-              .setTitle('Open Claude here (YOLO)')
-              .setIcon('zap')
-              .onClick(() => {
-                const absolutePath = this.app.vault.adapter.getFullPath(file.path);
-                this.createNewTab(absolutePath, true);
-              })
-          );
+          const folderBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+          if (folderBackend.yoloFlag) {
+            menu.addItem(item =>
+              item
+                .setTitle('Open Claude here (YOLO)')
+                .setIcon('zap')
+                .onClick(() => {
+                  const absolutePath = this.app.vault.adapter.getFullPath(file.path);
+                  this.createNewTab(absolutePath, true);
+                })
+            );
+          }
         }
       })
     );
+    this.addSettingTab(new ClaudeSidebarSettingsTab(this.app, this));
   }
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);

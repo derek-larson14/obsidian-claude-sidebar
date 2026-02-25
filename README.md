@@ -13,6 +13,7 @@ Built by [Derek Larson](https://dtlarson.com). [Pair with commands →](https://
 - **Multiple tabs** - Run multiple Claude instances side by side
 - **Folder context menu** - Right-click any folder to open Claude in that directory
 - **YOLO mode** - Launch Claude with `--dangerously-skip-permissions` via right-click menus
+- **Multi-backend** - Switch between Claude Code, Codex, OpenCode, and Gemini CLI in settings
 
 ## Requirements
 
