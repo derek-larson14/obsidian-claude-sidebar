@@ -6740,6 +6740,167 @@ var CLI_BACKENDS = {
     resumeIsSubcommand: false,
   },
 };
+var DIFF_HOOK_SCRIPT = `#!/bin/bash
+INPUT=$(cat)
+FILE_PATH=$(echo "$INPUT" | jq -r '.tool_input.file_path // empty' 2>/dev/null)
+[ -z "$FILE_PATH" ] && exit 0
+TOOL_NAME=$(echo "$INPUT" | jq -r '.tool_name // "unknown"' 2>/dev/null)
+CWD=$(echo "$INPUT" | jq -r '.cwd // empty' 2>/dev/null)
+jq -n -c \\
+  --arg fp "$FILE_PATH" \\
+  --arg tool "$TOOL_NAME" \\
+  --argjson ts "$(date +%s)" \\
+  --arg cwd "$CWD" \\
+  '{file_path:$fp,tool:$tool,ts:$ts,cwd:$cwd}' \\
+  >> /tmp/claude-sidebar-diff.jsonl 2>/dev/null
+exit 0
+`;
+var DIFF_JSONL_PATH = "/tmp/claude-sidebar-diff.jsonl";
+var DIFF_HOOK_PATH = (process.env.HOME || process.env.USERPROFILE || "") + "/.claude/hooks/sidebar-diff-hook.sh";
+var SessionDiffTracker = class {
+  constructor(app) {
+    this.app = app;
+    this.vaultPath = app.vault.adapter.basePath || "";
+    this.changes = new Map();       // relPath -> {before, after, ts}
+    this.claudeFiles = new Set();   // relPaths confirmed from Claude via JSONL
+    this.recentModifies = new Map(); // relPath -> {before, after, ts} — all vault changes, pending attribution
+    this.snapshots = new Map();     // relPath -> last known content (for before tracking)
+    this.pollTimer = null;
+    this.lastReadPos = 0;
+    this.vaultHandler = null;
+    this.onChange = null;
+  }
+  start() {
+    // Record current JSONL size as baseline so we ignore old entries
+    try {
+      const stat = fs.statSync(DIFF_JSONL_PATH);
+      this.lastReadPos = stat.size;
+    } catch (e) {
+      this.lastReadPos = 0;
+    }
+    // Listen to vault modify events — capture before/after for ALL changes
+    this.vaultHandler = this.app.vault.on("modify", (file) => {
+      this._onVaultModify(file);
+    });
+    // Poll JSONL every 2s to attribute changes to Claude
+    this.pollTimer = setInterval(() => this._processNewLines(), 2000);
+  }
+  _onVaultModify(file) {
+    const relPath = file.path;
+    const before = this.snapshots.get(relPath) ?? null;
+    // Read the new content and store as pending modification
+    this.app.vault.cachedRead(file).then(afterContent => {
+      this.recentModifies.set(relPath, {
+        before,
+        after: afterContent,
+        ts: Date.now()
+      });
+      // Update snapshot for next change
+      this.snapshots.set(relPath, afterContent);
+    });
+  }
+  _processNewLines() {
+    let data;
+    try {
+      const fd = fs.openSync(DIFF_JSONL_PATH, "r");
+      const stat = fs.fstatSync(fd);
+      if (stat.size <= this.lastReadPos) {
+        fs.closeSync(fd);
+        return;
+      }
+      const buf = Buffer.alloc(stat.size - this.lastReadPos);
+      fs.readSync(fd, buf, 0, buf.length, this.lastReadPos);
+      this.lastReadPos = stat.size;
+      fs.closeSync(fd);
+      data = buf.toString("utf8");
+    } catch (e) {
+      return;
+    }
+    const lines = data.split("\n").filter(l => l.trim());
+    let changed = false;
+    for (const line of lines) {
+      let entry;
+      try { entry = JSON.parse(line); } catch (e) { continue; }
+      const filePath = entry.file_path;
+      if (!filePath) continue;
+      if (!filePath.startsWith(this.vaultPath)) continue;
+      const relPath = filePath.slice(this.vaultPath.length + 1);
+      this.claudeFiles.add(relPath);
+      // Check if we already captured this modify from the vault event
+      const pending = this.recentModifies.get(relPath);
+      if (pending) {
+        const existing = this.changes.get(relPath);
+        this.changes.set(relPath, {
+          before: existing ? existing.before : pending.before,
+          after: pending.after,
+          ts: pending.ts
+        });
+        this.recentModifies.delete(relPath);
+        changed = true;
+      } else {
+        // Vault event hasn't fired yet — read directly from disk
+        const abstract = this.app.vault.getAbstractFileByPath(relPath);
+        if (abstract && abstract instanceof import_obsidian.TFile) {
+          this.app.vault.read(abstract).then(content => {
+            const existing = this.changes.get(relPath);
+            const before = existing ? existing.before : (this.snapshots.get(relPath) ?? null);
+            this.changes.set(relPath, { before, after: content, ts: Date.now() });
+            this.snapshots.set(relPath, content);
+            if (this.onChange) this.onChange();
+          });
+        }
+      }
+    }
+    if (changed && this.onChange) this.onChange();
+  }
+  getChangedFiles() {
+    const result = [];
+    for (const [relPath, info] of this.changes) {
+      result.push({
+        path: relPath,
+        canUndo: info.before !== null && info.before !== info.after,
+        timestamp: info.ts
+      });
+    }
+    return result.sort((a, b) => b.timestamp - a.timestamp);
+  }
+  async undoFile(relPath) {
+    const info = this.changes.get(relPath);
+    if (!info || info.before === null) return false;
+    const abstract = this.app.vault.getAbstractFileByPath(relPath);
+    if (!abstract || !(abstract instanceof import_obsidian.TFile)) return false;
+    const current = await this.app.vault.read(abstract);
+    if (current !== info.after) return false; // file changed since, unsafe to revert
+    await this.app.vault.modify(abstract, info.before);
+    this.changes.delete(relPath);
+    this.shadowSnaps.delete(relPath);
+    if (this.onChange) this.onChange();
+    return true;
+  }
+  clear() {
+    this.changes.clear();
+    this.claudeFiles.clear();
+    this.recentModifies.clear();
+    if (this.onChange) this.onChange();
+  }
+  stop() {
+    if (this.pollTimer) {
+      clearInterval(this.pollTimer);
+      this.pollTimer = null;
+    }
+  }
+  destroy() {
+    this.stop();
+    if (this.vaultHandler) {
+      this.app.vault.offref(this.vaultHandler);
+      this.vaultHandler = null;
+    }
+    this.changes.clear();
+    this.claudeFiles.clear();
+    this.recentModifies.clear();
+    this.snapshots.clear();
+  }
+};
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -6765,6 +6926,12 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.workingDir = null;
     // YOLO mode (--dangerously-skip-permissions)
     this.yoloMode = false;
+    // Diff tracking
+    this.diffTracker = null;
+    this.diffPanel = null;
+    this.diffFileList = null;
+    this.diffHeader = null;
+    this.diffExpanded = false;
   }
   getBackend() {
     const key = this.plugin.pluginData.cliBackend || "claude";
@@ -7064,6 +7231,60 @@ var TerminalView = class extends import_obsidian.ItemView {
     container.empty();
     container.addClass("vault-terminal");
     this.termHost = container.createDiv({ cls: "vault-terminal-host" });
+    // Diff tracking panel (hidden by default)
+    this.diffPanel = container.createDiv({ cls: "vault-diff-panel" });
+    this.diffPanel.style.display = "none";
+    this.diffHeader = this.diffPanel.createDiv({ cls: "vault-diff-header" });
+    const headerLeft = this.diffHeader.createDiv({ cls: "vault-diff-header-left" });
+    this.diffHeaderArrow = headerLeft.createSpan({ cls: "vault-diff-arrow", text: "\u25B6" });
+    this.diffHeaderText = headerLeft.createSpan({ cls: "vault-diff-header-text", text: "0 files changed" });
+    headerLeft.addEventListener("click", () => {
+      this.diffExpanded = !this.diffExpanded;
+      this.diffHeaderArrow.textContent = this.diffExpanded ? "\u25BC" : "\u25B6";
+      this.diffFileList.style.display = this.diffExpanded ? "block" : "none";
+    });
+    const clearBtn = this.diffHeader.createEl("button", { cls: "vault-diff-clear", text: "Clear" });
+    clearBtn.addEventListener("click", () => {
+      if (this.diffTracker) this.diffTracker.clear();
+      this.diffPanel.style.display = "none";
+      this.diffExpanded = false;
+      this.diffHeaderArrow.textContent = "\u25B6";
+      this.diffFileList.style.display = "none";
+    });
+    this.diffFileList = this.diffPanel.createDiv({ cls: "vault-diff-files" });
+    this.diffFileList.style.display = "none";
+  }
+  updateDiffPanel() {
+    if (!this.diffTracker || !this.diffPanel) return;
+    const files = this.diffTracker.getChangedFiles();
+    if (files.length === 0) {
+      this.diffPanel.style.display = "none";
+      return;
+    }
+    this.diffPanel.style.display = "";
+    this.diffHeaderText.textContent = `${files.length} file${files.length === 1 ? "" : "s"} changed`;
+    this.diffFileList.empty();
+    for (const f of files) {
+      const row = this.diffFileList.createDiv({ cls: "vault-diff-file-row" });
+      const nameEl = row.createSpan({ cls: "vault-diff-filename", text: f.path });
+      nameEl.addEventListener("click", () => {
+        const abstract = this.app.vault.getAbstractFileByPath(f.path);
+        if (abstract && abstract instanceof import_obsidian.TFile) {
+          this.app.workspace.openLinkText(f.path, "", false);
+        }
+      });
+      if (f.canUndo) {
+        const revertBtn = row.createEl("button", { cls: "vault-diff-revert", text: "Revert" });
+        revertBtn.addEventListener("click", async () => {
+          const ok = await this.diffTracker?.undoFile(f.path);
+          if (ok) {
+            new import_obsidian.Notice(`Reverted ${f.path}`);
+          } else {
+            new import_obsidian.Notice(`Could not revert ${f.path} (file may have changed)`);
+          }
+        });
+      }
+    }
   }
   getThemeColors() {
     const styles = getComputedStyle(document.body);
@@ -7264,6 +7485,13 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   startShell(workingDir = null, yoloMode = false, continueSession = false) {
     this.stopShell();
+    // Start diff tracking if enabled
+    if (this.plugin.pluginData.diffTracking) {
+      if (this.diffTracker) this.diffTracker.destroy();
+      this.diffTracker = new SessionDiffTracker(this.app);
+      this.diffTracker.onChange = () => this.updateDiffPanel();
+      this.diffTracker.start();
+    }
     const defaultDir = this.plugin.pluginData.defaultWorkingDir;
     const vaultPath = this.plugin.getVaultPath();
     const resolvedDefault = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
@@ -7400,6 +7628,8 @@ var TerminalView = class extends import_obsidian.ItemView {
         this.term?.writeln(`\r\n[Process exited: ${code ?? signal}]`);
       }
       this.proc = null;
+      // Stop polling but keep panel visible for review/revert
+      if (this.diffTracker) this.diffTracker.stop();
     });
     this.proc.on("error", (err) => {
       if (isWindows && err.message.includes("ENOENT")) {
@@ -7476,6 +7706,10 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.termHost.removeEventListener('drop', this.fileDropHandler);
       this.fileDropHandler = null;
     }
+    if (this.diffTracker) {
+      this.diffTracker.destroy();
+      this.diffTracker = null;
+    }
     this.stopShell();
     this.term?.dispose();
     this.term = null;
@@ -7523,6 +7757,76 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
           this.plugin.pluginData.additionalFlags = value.trim() || null;
           await this.plugin.saveData(this.plugin.pluginData);
         }));
+    new import_obsidian.Setting(containerEl)
+      .setName("Track session changes")
+      .setDesc("Show files changed by Claude with revert capability. Installs a Claude Code hook.")
+      .addToggle(toggle => toggle
+        .setValue(!!this.plugin.pluginData.diffTracking)
+        .onChange(async (value) => {
+          this.plugin.pluginData.diffTracking = value;
+          await this.plugin.saveData(this.plugin.pluginData);
+          if (value) {
+            this._installDiffHook();
+          } else {
+            this._removeDiffHook();
+          }
+        }));
+  }
+  _installDiffHook() {
+    try {
+      // Write hook script
+      const hookDir = path.dirname(DIFF_HOOK_PATH);
+      if (!fs.existsSync(hookDir)) fs.mkdirSync(hookDir, { recursive: true });
+      fs.writeFileSync(DIFF_HOOK_PATH, DIFF_HOOK_SCRIPT, { mode: 0o755 });
+      // Add to ~/.claude/settings.json
+      const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      let settings = {};
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      } catch (e) {
+        // File may not exist yet
+      }
+      if (!settings.hooks) settings.hooks = {};
+      if (!settings.hooks.PostToolUse) settings.hooks.PostToolUse = [];
+      // Check if hook already installed
+      const existing = settings.hooks.PostToolUse.find(
+        h => h.hooks?.some(hk => hk.command === DIFF_HOOK_PATH)
+      );
+      if (!existing) {
+        settings.hooks.PostToolUse.push({
+          matcher: "Edit|Write",
+          hooks: [{ type: "command", command: DIFF_HOOK_PATH }]
+        });
+        const settingsDir = path.dirname(settingsPath);
+        if (!fs.existsSync(settingsDir)) fs.mkdirSync(settingsDir, { recursive: true });
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      }
+      new import_obsidian.Notice("Diff tracking hook installed");
+    } catch (e) {
+      new import_obsidian.Notice("Failed to install diff hook: " + e.message);
+    }
+  }
+  _removeDiffHook() {
+    try {
+      const homeDir = process.env.HOME || process.env.USERPROFILE || "";
+      const settingsPath = path.join(homeDir, ".claude", "settings.json");
+      let settings = {};
+      try {
+        settings = JSON.parse(fs.readFileSync(settingsPath, "utf8"));
+      } catch (e) { return; }
+      if (settings.hooks?.PostToolUse) {
+        settings.hooks.PostToolUse = settings.hooks.PostToolUse.filter(
+          h => !h.hooks?.some(hk => hk.command === DIFF_HOOK_PATH)
+        );
+        if (settings.hooks.PostToolUse.length === 0) delete settings.hooks.PostToolUse;
+        if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
+        fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      }
+      new import_obsidian.Notice("Diff tracking hook removed");
+    } catch (e) {
+      new import_obsidian.Notice("Failed to remove diff hook: " + e.message);
+    }
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
@@ -7662,7 +7966,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         if (!selection) return false;
 
         if (!checking) {
-          this.sendTextToTerminal(selection);
+          const enriched = this.buildSelectionContext(editor, selection);
+          this.sendTextToTerminal(enriched);
         }
         return true;
       }
@@ -7735,7 +8040,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
               .setTitle('Send selection to Claude')
               .setIcon('bot')
               .onClick(() => {
-                this.sendTextToTerminal(selection);
+                const enriched = this.buildSelectionContext(editor, selection);
+                this.sendTextToTerminal(enriched);
               })
           );
         }
@@ -7810,6 +8116,38 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         }
       }, 50);
     }
+  }
+  buildSelectionContext(editor, selection) {
+    const file = this.app.workspace.getActiveFile();
+    if (!file) return selection;
+
+    const vaultPath = this.getVaultPath();
+    const absolutePath = `${vaultPath}/${file.path}`;
+
+    // Get line numbers from cursor selection range
+    const from = editor.getCursor("from");
+    const to = editor.getCursor("to");
+    const startLine = from.line + 1;
+    const endLine = to.line + 1;
+    const lineInfo = startLine === endLine ? `line ${startLine}` : `lines ${startLine}-${endLine}`;
+
+    // Find [[wikilinks]] in the selection
+    const wikiLinkRegex = /\[\[([^\]|]+)(?:\|[^\]]+)?\]\]/g;
+    const linkedPaths = [];
+    let match;
+    while ((match = wikiLinkRegex.exec(selection)) !== null) {
+      const linkText = match[1];
+      const linked = this.app.metadataCache.getFirstLinkpathDest(linkText, file.path);
+      if (linked) {
+        linkedPaths.push(`${vaultPath}/${linked.path}`);
+      }
+    }
+
+    let context = `From "${absolutePath}" (${lineInfo}):\n\n${selection}`;
+    if (linkedPaths.length > 0) {
+      context += `\n\nLinked notes:\n${linkedPaths.map(p => `- "${p}"`).join("\n")}`;
+    }
+    return context;
   }
   async sendTextToTerminal(text) {
     let leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
