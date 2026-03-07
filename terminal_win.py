@@ -105,31 +105,41 @@ def main():
                 
                 input_buffer += data
                 
-                # Check for resize escape sequence
+                # Check for escape sequences.
+                # We identify the type by the second byte instead of reading
+                # a fixed number of bytes ahead, which avoids consuming the
+                # leading \x1b of a subsequent escape that happens to fall
+                # within the lookahead window.
                 if input_buffer.startswith(b'\x1b'):
-                    # Need at least 8 bytes for "\x1b]RESIZE"
-                    if len(input_buffer) < 8:
-                        # Try to read more to check if it's a resize command
-                        while len(input_buffer) < 8:
-                            more = sys.stdin.buffer.read(1)
-                            if not more:
-                                break
-                            input_buffer += more
-                    
-                    if input_buffer.startswith(b'\x1b]RESIZE'):
-                        # Read until \x07
+                    # Need at least 2 bytes to identify the escape type
+                    while len(input_buffer) < 2:
+                        more = sys.stdin.buffer.read(1)
+                        if not more:
+                            break
+                        input_buffer += more
+
+                    if len(input_buffer) < 2:
+                        # Bare ESC at EOF — pass through
+                        pty.write(input_buffer.decode('latin-1'))
+                        input_buffer = b''
+                        continue
+
+                    second = input_buffer[1:2]
+
+                    if second == b']':
+                        # OSC sequence (\x1b]...BEL) — read until BEL (\x07)
                         while b'\x07' not in input_buffer:
                             c = sys.stdin.buffer.read(1)
                             if not c:
                                 break
                             input_buffer += c
-                        
-                        if b'\x07' in input_buffer:
-                            # Parse the resize command
+
+                        if input_buffer.startswith(b'\x1b]RESIZE') and b'\x07' in input_buffer:
+                            # Parse the resize command: \x1b]RESIZE;cols;rows\x07
                             end_idx = input_buffer.index(b'\x07')
                             resize_cmd = input_buffer[8:end_idx]  # After "\x1b]RESIZE"
                             input_buffer = input_buffer[end_idx + 1:]
-                            
+
                             # Parse ;cols;rows
                             parts = resize_cmd.decode('utf-8', errors='ignore').strip(';').split(';')
                             if len(parts) == 2:
@@ -138,8 +148,46 @@ def main():
                                     pty.set_size(new_cols, new_rows)
                                 except ValueError:
                                     pass
+                        else:
+                            # Other OSC sequence — pass through to PTY
+                            pty.write(input_buffer.decode('latin-1'))
+                            input_buffer = b''
                         continue
-                
+
+                    elif second == b'[':
+                        # CSI sequence (\x1b[...final) — read until final byte (0x40–0x7E)
+                        while True:
+                            c = sys.stdin.buffer.read(1)
+                            if not c:
+                                break
+                            input_buffer += c
+                            if 0x40 <= input_buffer[-1] <= 0x7E:
+                                break
+
+                        # xterm.js sends terminal protocol responses (DA1, DA2,
+                        # device status) via term.onData in reply to ConPTY
+                        # capability queries. These must not reach cmd.exe.
+                        #   DA1:  \x1b[?...c   (e.g. \x1b[?1;2c)
+                        #   DA2:  \x1b[>...c   (e.g. \x1b[>0;0;0c)
+                        #   DSR:  \x1b[...n    (e.g. \x1b[0n)
+                        last = input_buffer[-1] if input_buffer else 0
+                        third = input_buffer[2:3]
+                        is_protocol_response = (
+                            (last == ord('c') and third in (b'?', b'>')) or
+                            (last == ord('n'))
+                        )
+                        if not is_protocol_response:
+                            # Legitimate user input (cursor keys, function keys, etc.)
+                            pty.write(input_buffer.decode('latin-1'))
+                        input_buffer = b''
+                        continue
+
+                    else:
+                        # Other two-byte escape (SS2, SS3, etc.) — pass through
+                        pty.write(input_buffer.decode('latin-1'))
+                        input_buffer = b''
+                        continue
+
                 # Process complete UTF-8 characters from buffer
                 while input_buffer:
                     char_bytes, input_buffer = read_utf8_char(input_buffer)
