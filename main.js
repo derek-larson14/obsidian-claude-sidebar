@@ -8052,10 +8052,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
     if (activeView) {
-      // Currently in Claude, go to editor
+      // Currently in Claude, go to editor — prefer most recent non-pinned leaf
       const leaves = this.app.workspace.getLeavesOfType("markdown");
-      if (leaves.length > 0) {
-        this.app.workspace.setActiveLeaf(leaves[0], { focus: true });
+      const unpinned = leaves.filter(l => !l.pinned);
+      const target = unpinned.length > 0 ? unpinned[0] : leaves[0];
+      if (target) {
+        this.app.workspace.setActiveLeaf(target, { focus: true });
       }
     } else {
       // Currently in editor, go to Claude (prefer last-active tab)
@@ -8091,6 +8093,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     if (leaves.length) {
       this.app.workspace.revealLeaf(leaves[0]);
+      this.app.workspace.setActiveLeaf(leaves[0], { focus: true });
+      setTimeout(() => {
+        const view = leaves[0].view;
+        if (view instanceof TerminalView && view.term) {
+          view.term.focus();
+        }
+      }, 50);
       return;
     }
     await this.createNewTab();
