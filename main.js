@@ -7280,7 +7280,7 @@ var TerminalView = class extends import_obsidian.ItemView {
   fit() {
     if (!this.term || !this.fitAddon) return;
     try {
-      const userScrolled = Date.now() - (this.userScrolledAt || 0) < 1000;
+      const userScrolled = Date.now() - (this.userScrolledAt || 0) < 5000;
       const wasAtBottom = !userScrolled && this.term.buffer.active.baseY === this.term.buffer.active.viewportY;
       const savedViewportY = this._fitPending && this._scrollTarget !== null
         ? this._scrollTarget
@@ -7445,7 +7445,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.hasOutput = true;
       if (this.term) {
         const buffer = this.term.buffer.active;
-        const userScrolled = Date.now() - this.userScrolledAt < 1000;
+        const userScrolled = Date.now() - this.userScrolledAt < 5000;
         const atBottom = !userScrolled && buffer.baseY === buffer.viewportY;
         const savedViewportY = buffer.viewportY;
         const text = this.stdoutDecoder.write(data);
