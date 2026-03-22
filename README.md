@@ -113,6 +113,8 @@ pip install pywinpty
 $u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip"; Invoke-WebRequest $u -OutFile s.zip; Expand-Archive s.zip .obsidian\plugins -Force; Move-Item ".obsidian\plugins\obsidian-claude-sidebar-main" ".obsidian\plugins\claude-sidebar" -Force; Remove-Item s.zip
 ```
 
+4. Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude Sidebar"
+
 **Note:** Windows support is experimental. Performance may be slower than macOS/Linux due to ConPTY overhead.
 
 ## How It Works
