@@ -42,6 +42,44 @@
 	scrollbar-gutter: stable;
 }
 
+/* Context bar: shows active file + selection above terminal */
+.vault-terminal-context-bar {
+	display: flex;
+	align-items: center;
+	padding: 4px 8px;
+	font-size: 11px;
+	background: var(--background-secondary-alt);
+	border-bottom: 1px solid var(--background-modifier-border);
+	color: var(--text-muted);
+	gap: 4px;
+	min-height: 24px;
+	flex-shrink: 0;
+}
+
+.vault-terminal-context-bar .context-file {
+	font-weight: 600;
+	color: var(--text-normal);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	cursor: help;
+}
+
+.vault-terminal-context-bar .context-selection {
+	flex: 1;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	opacity: 0.7;
+}
+
+.vault-terminal-context-bar .context-hint {
+	font-size: 10px;
+	margin-left: auto;
+	opacity: 0.6;
+	white-space: nowrap;
+}
+
 /* IME support: keep textarea positioned near cursor for input method candidate window */
 .vault-terminal-host .xterm .xterm-helper-textarea {
 	/* Allow xterm.js to position the textarea for IME support */

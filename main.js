@@ -6740,6 +6740,19 @@ var CLI_BACKENDS = {
     resumeIsSubcommand: false,
   },
 };
+function createEmptyProfile(name = "Default", folder = "") {
+  return {
+    id: Date.now().toString(36) + Math.random().toString(36).slice(2, 7),
+    name: name,
+    folder: folder,
+    isDefault: false,
+    anthropicBaseUrl: "",
+    anthropicAuthToken: "",
+    anthropicModel: "",
+    anthropicSmallFastModel: "",
+    maxThinkingTokens: ""
+  };
+}
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -6768,6 +6781,12 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.workingDir = null;
     // YOLO mode (--dangerously-skip-permissions)
     this.yoloMode = false;
+    // Auto-context: flag set by key handler, consumed by onData handler
+    this._suppressingEcho = false;
+    this._suppressEchoMarker = null;
+    this._suppressBuffer = '';
+    // Profile ID for per-folder API configuration
+    this.profileId = null;
   }
   getBackend() {
     const key = this.plugin.pluginData.cliBackend || "claude";
@@ -6793,15 +6812,19 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (state?.continueSession) {
       this.continueSession = state.continueSession;
     }
+    if (state?.profileId) {
+      this.profileId = state.profileId;
+    }
     // If shell already started, restart with new settings
-    if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession)) {
-      this.startShell(this.workingDir, this.yoloMode, this.continueSession);
+    if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession || state?.profileId)) {
+      this.startShell(this.workingDir, this.yoloMode, this.continueSession, this.profileId);
     }
   }
   getState() {
     const state = {};
     if (this.workingDir) state.workingDir = this.workingDir;
     if (this.yoloMode) state.yoloMode = this.yoloMode;
+    if (this.profileId) state.profileId = this.profileId;
     // Don't persist continueSession — it's a one-time action
     return state;
   }
@@ -6812,7 +6835,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Delay shell start slightly to allow setState() to be called first
     setTimeout(() => {
       if (!this.proc) {
-        this.startShell(this.workingDir, this.yoloMode, this.continueSession);
+        this.startShell(this.workingDir, this.yoloMode, this.continueSession, this.profileId);
       }
     }, 10);
     this.setupEscapeHandler();
@@ -7066,7 +7089,70 @@ var TerminalView = class extends import_obsidian.ItemView {
     const container = this.containerEl;
     container.empty();
     container.addClass("vault-terminal");
+
+    // Context bar: shows active file + selection with shortcut hint
+    this.contextBar = container.createDiv({ cls: "vault-terminal-context-bar" });
+    this.contextBar.style.display = "none";
+    this.contextFileEl = this.contextBar.createSpan({ cls: "context-file" });
+    this.contextSelEl = this.contextBar.createSpan({ cls: "context-selection" });
+    const isMac = navigator.userAgent?.includes('Mac');
+    this.contextBar.createSpan({
+      cls: "context-hint",
+      text: isMac ? "\u2318\u21A9 send with context" : "Ctrl+\u21A9 send with context"
+    });
+
     this.termHost = container.createDiv({ cls: "vault-terminal-host" });
+  }
+  updateContextBar(ctx) {
+    if (!this.contextBar) return;
+    if (!ctx || this.plugin.pluginData.showContextBar === false) {
+      this.contextBar.style.display = "none";
+      return;
+    }
+    this.contextBar.style.display = "flex";
+    const fileName = ctx.filePath.split("/").pop();
+    this.contextFileEl.setText(fileName);
+    this.contextFileEl.setAttribute("title", ctx.filePath);
+    if (ctx.selection) {
+      const preview = ctx.selection.substring(0, 60).replace(/\n/g, " ");
+      const lines = ctx.startLine === ctx.endLine
+        ? `L${ctx.startLine}`
+        : `L${ctx.startLine}-${ctx.endLine}`;
+      this.contextSelEl.setText(` | ${lines}: ${preview}${ctx.selection.length > 60 ? "..." : ""}`);
+    } else {
+      this.contextSelEl.setText("");
+    }
+  }
+  _sendWithContext() {
+    if (!this.proc || this.proc.killed) return;
+    const ctx = this.plugin.activeDocContext;
+    if (!ctx) {
+      // No context available — just send Enter normally
+      this.proc.stdin?.write('\r');
+      return;
+    }
+
+    // Build compact context: file path + line range if selection exists
+    // Claude Code will read the file itself; it just needs to know WHERE to look
+    let contextLine = '[' + ctx.filePath;
+    if (ctx.selection) {
+      contextLine += ctx.startLine === ctx.endLine
+        ? ':' + ctx.startLine
+        : ':' + ctx.startLine + '-' + ctx.endLine;
+    }
+    contextLine += ']';
+
+    // Mark for echo suppression
+    this._suppressEchoMarker = contextLine;
+    this._suppressingEcho = true;
+
+    // Inject: Alt+Enter (newline) + context + Enter (submit)
+    this.proc.stdin?.write('\x1b\r');
+    this.proc.stdin?.write(contextLine);
+    this.proc.stdin?.write('\r');
+
+    // Safety: clear suppression after 500ms
+    setTimeout(() => { this._suppressingEcho = false; this._suppressEchoMarker = null; }, 500);
   }
   getThemeColors() {
     const styles = getComputedStyle(document.body);
@@ -7239,6 +7325,13 @@ var TerminalView = class extends import_obsidian.ItemView {
         }
         return false; // Block both keydown and keypress
       }
+      // Ctrl+Enter (or Cmd+Enter on Mac): send message WITH context
+      if (ev.key === 'Enter' && (ev.ctrlKey || ev.metaKey) && !ev.shiftKey && !ev.altKey) {
+        if (ev.type === 'keydown' && !ev.repeat) {
+          this._sendWithContext();
+        }
+        return false; // Block both keydown and keypress
+      }
       if (ev.type === 'keydown') {
         // Cmd+Arrow: readline shortcuts for line navigation
         if (ev.metaKey) {
@@ -7258,9 +7351,8 @@ var TerminalView = class extends import_obsidian.ItemView {
       if (this.proc && !this.proc.killed) {
         // Filter out focus in/out sequences before sending to shell
         const filtered = data.replace(/\x1b\[I/g, '').replace(/\x1b\[O/g, '');
-        if (filtered) {
-          this.proc.stdin?.write(filtered);
-        }
+        if (!filtered) return;
+        this.proc.stdin?.write(filtered);
       }
     });
     this.ensureFitWithRetry();
@@ -7328,12 +7420,33 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
   }
-  startShell(workingDir = null, yoloMode = false, continueSession = false) {
+  startShell(workingDir = null, yoloMode = false, continueSession = false, profileId = null) {
     this.stopShell();
-    const defaultDir = this.plugin.pluginData.defaultWorkingDir;
     const vaultPath = this.plugin.getVaultPath();
-    const resolvedDefault = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
-    const cwd = workingDir || resolvedDefault;
+    const profile = profileId ? this.plugin.getProfileById(profileId) : null;
+    const defaultProfile = this.plugin.getDefaultProfile();
+    // Priority: explicit workingDir > profile folder > default profile folder > legacy defaultWorkingDir > vault root
+    let cwd;
+    if (workingDir) {
+      cwd = workingDir;
+    } else if (profile && profile.folder) {
+      cwd = path.resolve(vaultPath, profile.folder);
+    } else if (defaultProfile && defaultProfile.folder) {
+      cwd = path.resolve(vaultPath, defaultProfile.folder);
+    } else {
+      const defaultDir = this.plugin.pluginData.defaultWorkingDir;
+      cwd = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
+    }
+    // Ensure cwd exists, fall back to vault root
+    try {
+      if (!fs.existsSync(cwd)) {
+        cwd = vaultPath;
+      }
+    } catch (e) {
+      cwd = vaultPath;
+    }
+    // Debug: log cwd resolution (remove after debugging)
+    console.log("[Claude Sidebar] startShell cwd:", cwd, "profileId:", profileId, "profile:", profile?.name, "defaultProfile:", defaultProfile?.name);
     // Persist last working directory for resume
     this.plugin.pluginData.lastCwd = cwd;
     this.plugin.saveData(this.plugin.pluginData);
@@ -7408,6 +7521,15 @@ var TerminalView = class extends import_obsidian.ItemView {
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
     let shellEnv = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+    // Inject profile-specific environment variables
+    const activeProfile = profile || defaultProfile;
+    if (activeProfile) {
+      if (activeProfile.anthropicBaseUrl) shellEnv.ANTHROPIC_BASE_URL = activeProfile.anthropicBaseUrl;
+      if (activeProfile.anthropicAuthToken) shellEnv.ANTHROPIC_AUTH_TOKEN = activeProfile.anthropicAuthToken;
+      if (activeProfile.anthropicModel) shellEnv.ANTHROPIC_MODEL = activeProfile.anthropicModel;
+      if (activeProfile.anthropicSmallFastModel) shellEnv.ANTHROPIC_SMALL_FAST_MODEL = activeProfile.anthropicSmallFastModel;
+      if (activeProfile.maxThinkingTokens) shellEnv.MAX_THINKING_TOKENS = activeProfile.maxThinkingTokens;
+    }
     if (!isWindows) {
       try {
         const shellOutput = (0, import_child_process.execSync)(
@@ -7448,7 +7570,19 @@ var TerminalView = class extends import_obsidian.ItemView {
         const userScrolled = Date.now() - this.userScrolledAt < 5000;
         const atBottom = !userScrolled && buffer.baseY === buffer.viewportY;
         const savedViewportY = buffer.viewportY;
-        const text = this.stdoutDecoder.write(data);
+        let text = this.stdoutDecoder.write(data);
+        // Echo suppression: strip context line from terminal display
+        if (this._suppressingEcho && this._suppressEchoMarker) {
+          // Remove the marker text and surrounding whitespace/newlines from echoed output
+          const marker = this._suppressEchoMarker;
+          const idx = text.indexOf(marker);
+          if (idx !== -1) {
+            text = text.substring(0, idx) + text.substring(idx + marker.length);
+            this._suppressingEcho = false;
+            this._suppressEchoMarker = null;
+            this._suppressBuffer = '';
+          }
+        }
         const hasCursorHome = text.includes("\x1b[H");
         this.term.write(text);
         if (atBottom) {
@@ -7582,16 +7716,6 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         });
       });
     new import_obsidian.Setting(containerEl)
-      .setName("Default working directory")
-      .setDesc("Absolute path or relative to vault root. Leave empty for vault root.")
-      .addText(text => text
-        .setPlaceholder("/Users/you/project")
-        .setValue(this.plugin.pluginData.defaultWorkingDir || "")
-        .onChange(async (value) => {
-          this.plugin.pluginData.defaultWorkingDir = value.trim() || null;
-          await this.plugin.saveData(this.plugin.pluginData);
-        }));
-    new import_obsidian.Setting(containerEl)
       .setName("CLI flags")
       .setDesc("Flags appended to every CLI session.")
       .addText(text => text
@@ -7601,6 +7725,181 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
           this.plugin.pluginData.additionalFlags = value.trim() || null;
           await this.plugin.saveData(this.plugin.pluginData);
         }));
+
+    new import_obsidian.Setting(containerEl)
+      .setName("Context bar")
+      .setDesc("Show active file and selection in a bar above the terminal. Use Cmd/Ctrl+Enter to send with context.")
+      .addToggle(toggle => toggle
+        .setValue(this.plugin.pluginData.showContextBar !== false)
+        .onChange(async (value) => {
+          this.plugin.pluginData.showContextBar = value;
+          await this.plugin.saveData(this.plugin.pluginData);
+          // Update all open terminal views
+          const leaves = this.plugin.app.workspace.getLeavesOfType(VIEW_TYPE);
+          for (const leaf of leaves) {
+            if (leaf.view instanceof TerminalView) {
+              if (leaf.view.contextBar) {
+                leaf.view.contextBar.style.display = value ? "flex" : "none";
+              }
+            }
+          }
+        }));
+
+    // --- Folder Profiles Section ---
+    containerEl.createEl("h3", { text: "Folder Profiles" });
+    containerEl.createEl("p", {
+      text: "Each profile defines a working directory and optional API environment variables. The default profile is used for ribbon clicks and 'Run from active folder'.",
+      cls: "setting-item-description"
+    });
+
+    new import_obsidian.Setting(containerEl)
+      .addButton(btn => btn
+        .setButtonText("Add Profile")
+        .setCta()
+        .onClick(async () => {
+          if (!this.plugin.pluginData.folderProfiles) {
+            this.plugin.pluginData.folderProfiles = [];
+          }
+          const profile = createEmptyProfile("New Profile");
+          if (this.plugin.pluginData.folderProfiles.length === 0) {
+            profile.isDefault = true;
+          }
+          this.plugin.pluginData.folderProfiles.push(profile);
+          await this.plugin.saveData(this.plugin.pluginData);
+          this.display();
+        }));
+
+    for (const profile of (this.plugin.pluginData.folderProfiles || [])) {
+      const details = containerEl.createEl("details", { cls: "folder-profile-section" });
+      details.style.border = "1px solid var(--background-modifier-border)";
+      details.style.borderRadius = "8px";
+      details.style.padding = "8px 12px";
+      details.style.marginBottom = "8px";
+      const summary = details.createEl("summary");
+      summary.style.cursor = "pointer";
+      summary.style.fontWeight = "600";
+      const defaultTag = profile.isDefault ? " (default)" : "";
+      summary.createEl("span", { text: profile.name + defaultTag });
+
+      // Profile name
+      new import_obsidian.Setting(details)
+        .setName("Profile name")
+        .addText(text => text
+          .setValue(profile.name)
+          .onChange(async (v) => {
+            profile.name = v.trim() || "Unnamed";
+            await this.plugin.saveData(this.plugin.pluginData);
+            const tag = profile.isDefault ? " (default)" : "";
+            summary.querySelector("span").textContent = profile.name + tag;
+          }));
+
+      // Folder path
+      new import_obsidian.Setting(details)
+        .setName("Working directory")
+        .setDesc("Absolute path or relative to vault root.")
+        .addText(text => text
+          .setPlaceholder("/Users/you/project")
+          .setValue(profile.folder || "")
+          .onChange(async (v) => {
+            profile.folder = v.trim();
+            await this.plugin.saveData(this.plugin.pluginData);
+          }));
+
+      // Default toggle
+      new import_obsidian.Setting(details)
+        .setName("Set as default")
+        .setDesc("Used for ribbon clicks and 'Run from active folder'.")
+        .addToggle(toggle => toggle
+          .setValue(profile.isDefault)
+          .onChange(async (v) => {
+            for (const p of this.plugin.pluginData.folderProfiles) {
+              p.isDefault = false;
+            }
+            profile.isDefault = v;
+            await this.plugin.saveData(this.plugin.pluginData);
+            this.display();
+          }));
+
+      // ANTHROPIC_BASE_URL
+      new import_obsidian.Setting(details)
+        .setName("ANTHROPIC_BASE_URL")
+        .setDesc("Custom API base URL (optional).")
+        .addText(text => text
+          .setPlaceholder("https://api.anthropic.com")
+          .setValue(profile.anthropicBaseUrl || "")
+          .onChange(async (v) => {
+            profile.anthropicBaseUrl = v.trim();
+            await this.plugin.saveData(this.plugin.pluginData);
+          }));
+
+      // ANTHROPIC_AUTH_TOKEN (password field)
+      new import_obsidian.Setting(details)
+        .setName("ANTHROPIC_AUTH_TOKEN")
+        .setDesc("API key for this profile (optional, stored locally).")
+        .addText(text => {
+          text.inputEl.type = "password";
+          text.inputEl.autocomplete = "off";
+          text.setPlaceholder("sk-ant-...")
+            .setValue(profile.anthropicAuthToken || "")
+            .onChange(async (v) => {
+              profile.anthropicAuthToken = v.trim();
+              await this.plugin.saveData(this.plugin.pluginData);
+            });
+        });
+
+      // ANTHROPIC_MODEL
+      new import_obsidian.Setting(details)
+        .setName("ANTHROPIC_MODEL")
+        .setDesc("Override the default model (optional).")
+        .addText(text => text
+          .setPlaceholder("claude-sonnet-4-20250514")
+          .setValue(profile.anthropicModel || "")
+          .onChange(async (v) => {
+            profile.anthropicModel = v.trim();
+            await this.plugin.saveData(this.plugin.pluginData);
+          }));
+
+      // ANTHROPIC_SMALL_FAST_MODEL
+      new import_obsidian.Setting(details)
+        .setName("ANTHROPIC_SMALL_FAST_MODEL")
+        .setDesc("Override the small/fast model (optional).")
+        .addText(text => text
+          .setPlaceholder("claude-haiku-4-5-20251001")
+          .setValue(profile.anthropicSmallFastModel || "")
+          .onChange(async (v) => {
+            profile.anthropicSmallFastModel = v.trim();
+            await this.plugin.saveData(this.plugin.pluginData);
+          }));
+
+      // MAX_THINKING_TOKENS
+      new import_obsidian.Setting(details)
+        .setName("MAX_THINKING_TOKENS")
+        .setDesc("Override max thinking tokens (optional).")
+        .addText(text => text
+          .setPlaceholder("10000")
+          .setValue(profile.maxThinkingTokens || "")
+          .onChange(async (v) => {
+            profile.maxThinkingTokens = v.trim();
+            await this.plugin.saveData(this.plugin.pluginData);
+          }));
+
+      // Delete button
+      new import_obsidian.Setting(details)
+        .addButton(btn => btn
+          .setButtonText("Delete Profile")
+          .setWarning()
+          .onClick(async () => {
+            const idx = this.plugin.pluginData.folderProfiles.indexOf(profile);
+            if (idx > -1) {
+              this.plugin.pluginData.folderProfiles.splice(idx, 1);
+              if (profile.isDefault && this.plugin.pluginData.folderProfiles.length > 0) {
+                this.plugin.pluginData.folderProfiles[0].isDefault = true;
+              }
+              await this.plugin.saveData(this.plugin.pluginData);
+              this.display();
+            }
+          }));
+    }
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
@@ -7608,26 +7907,52 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     super(...arguments);
     this.lastRibbonClick = 0;
     this.pluginData = {};
+    this.activeDocContext = null; // { filePath, selection, startLine, endLine }
   }
   async onload() {
     this.pluginData = await this.loadData() || {};
+    // Migration: ensure folderProfiles array exists
+    if (!this.pluginData.folderProfiles) {
+      this.pluginData.folderProfiles = [];
+    }
+    // Migration: convert legacy defaultWorkingDir to a folder profile
+    if (this.pluginData.defaultWorkingDir && this.pluginData.folderProfiles.length === 0) {
+      const migrated = createEmptyProfile("Default", this.pluginData.defaultWorkingDir);
+      migrated.isDefault = true;
+      this.pluginData.folderProfiles.push(migrated);
+      await this.saveData(this.pluginData);
+    }
     this.lastActiveTerminalLeaf = null;
 
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
 
-    // Track the most recently focused Claude tab
+    // Track the most recently focused Claude tab + update active doc context
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', (leaf) => {
         if (leaf && leaf.view instanceof TerminalView) {
           this.lastActiveTerminalLeaf = leaf;
         }
+        this.updateActiveDocContext();
       })
+    );
+
+    // Track selection/cursor changes for context awareness
+    this.registerEvent(
+      this.app.workspace.on('editor-change', () => {
+        this.updateActiveDocContext();
+      })
+    );
+
+    // Poll for selection changes (selection events aren't directly available)
+    this.registerInterval(
+      window.setInterval(() => this.updateActiveDocContext(), 500)
     );
     const ribbonIcon = this.addRibbonIcon("bot", "New Claude Tab", () => {
       const now = Date.now();
       if (now - this.lastRibbonClick < 1500) return; // 1.5s throttle to prevent accidental double-clicks
       this.lastRibbonClick = now;
-      this.createNewTab();
+      const defProfile = this.getDefaultProfile();
+      this.createNewTab(null, false, false, defProfile?.id || null);
     });
     // Right-click context menu
     ribbonIcon.addEventListener("contextmenu", (e) => {
@@ -7642,7 +7967,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
               const now = Date.now();
               if (now - this.lastRibbonClick < 1500) return;
               this.lastRibbonClick = now;
-              this.createNewTab(null, true);
+              const defProfile = this.getDefaultProfile();
+              this.createNewTab(null, true, false, defProfile?.id || null);
             });
         });
       }
@@ -7660,9 +7986,30 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
               const parentPath = file.parent ? file.parent.path : "";
               dir = parentPath ? `${vaultPath}/${parentPath}` : vaultPath;
             }
-            this.createNewTab(dir);
+            const defProfile = this.getDefaultProfile();
+            this.createNewTab(dir, false, false, defProfile?.id || null);
           });
       });
+      // Folder profiles in context menu
+      const profiles = this.pluginData.folderProfiles || [];
+      if (profiles.length > 0) {
+        menu.addSeparator();
+        for (const prof of profiles) {
+          menu.addItem((item) => {
+            const label = prof.isDefault ? `\u2B50 ${prof.name}` : prof.name;
+            item.setTitle(label)
+              .setIcon("folder")
+              .onClick(() => {
+                const now = Date.now();
+                if (now - this.lastRibbonClick < 1500) return;
+                this.lastRibbonClick = now;
+                const vaultPath = this.getVaultPath();
+                const dir = prof.folder ? path.resolve(vaultPath, prof.folder) : vaultPath;
+                this.createNewTab(dir, false, false, prof.id);
+              });
+          });
+        }
+      }
       if (activeBackend.resumeFlag) {
         menu.addItem((item) => {
           item.setTitle("Resume last conversation")
@@ -7672,7 +8019,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
               if (now - this.lastRibbonClick < 1500) return;
               this.lastRibbonClick = now;
               const lastCwd = this.pluginData.lastCwd || null;
-              this.createNewTab(lastCwd, false, true);
+              const defProfile = this.getDefaultProfile();
+              this.createNewTab(lastCwd, false, true, defProfile?.id || null);
             });
         });
       }
@@ -7686,7 +8034,10 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.addCommand({
       id: "new-claude-tab",
       name: "New Claude Tab",
-      callback: () => this.createNewTab()
+      callback: () => {
+        const defProfile = this.getDefaultProfile();
+        this.createNewTab(null, false, false, defProfile?.id || null);
+      }
     });
     this.addCommand({
       id: "new-claude-tab-yolo",
@@ -7694,7 +8045,10 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       checkCallback: (checking) => {
         const backend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
         if (!backend?.yoloFlag) return false;
-        if (!checking) this.createNewTab(null, true);
+        if (!checking) {
+          const defProfile = this.getDefaultProfile();
+          this.createNewTab(null, true, false, defProfile?.id || null);
+        }
         return true;
       }
     });
@@ -7758,7 +8112,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
           const parentPath = file.parent ? file.parent.path : "";
           dir = parentPath ? `${vaultPath}/${parentPath}` : vaultPath;
         }
-        this.createNewTab(dir);
+        const defProfile = this.getDefaultProfile();
+        this.createNewTab(dir, false, false, defProfile?.id || null);
       }
     });
     this.addCommand({
@@ -7769,7 +8124,8 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         if (!backend?.resumeFlag) return false;
         if (!checking) {
           const lastCwd = this.pluginData.lastCwd || null;
-          this.createNewTab(lastCwd, false, true);
+          const defProfile = this.getDefaultProfile();
+          this.createNewTab(lastCwd, false, true, defProfile?.id || null);
         }
         return true;
       }
@@ -7863,6 +8219,66 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     const adapter = this.app.vault.adapter;
     return adapter.basePath || "";
   }
+  getDefaultProfile() {
+    const profiles = this.pluginData.folderProfiles || [];
+    return profiles.find(p => p.isDefault) || profiles[0] || null;
+  }
+  getProfileById(id) {
+    return (this.pluginData.folderProfiles || []).find(p => p.id === id) || null;
+  }
+  updateActiveDocContext() {
+    // When the terminal is focused, preserve the last editor context
+    // (otherwise clicking the terminal to type clears the file/selection)
+    const activeLeaf = this.app.workspace.activeLeaf;
+    if (activeLeaf && activeLeaf.view instanceof TerminalView) {
+      return; // Keep previous context
+    }
+    const file = this.app.workspace.getActiveFile();
+    if (!file) {
+      this.activeDocContext = null;
+      this.updateContextBars();
+      return;
+    }
+    const vaultPath = this.getVaultPath();
+    const filePath = `${vaultPath}/${file.path}`;
+
+    // Try multiple ways to get the editor for selection tracking
+    let editor = this.app.workspace.activeEditor?.editor;
+    if (!editor) {
+      // Fallback: find the MarkdownView for this file
+      const leaves = this.app.workspace.getLeavesOfType('markdown');
+      for (const leaf of leaves) {
+        if (leaf.view?.file?.path === file.path && leaf.view.editor) {
+          editor = leaf.view.editor;
+          break;
+        }
+      }
+    }
+
+    let selection = null;
+    let startLine = null;
+    let endLine = null;
+    if (editor) {
+      const sel = editor.getSelection();
+      if (sel && sel.trim().length > 0) {
+        selection = sel;
+        const from = editor.getCursor("from");
+        const to = editor.getCursor("to");
+        startLine = from.line + 1;
+        endLine = to.line + 1;
+      }
+    }
+    this.activeDocContext = { filePath, selection, startLine, endLine };
+    this.updateContextBars();
+  }
+  updateContextBars() {
+    const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
+    for (const leaf of leaves) {
+      if (leaf.view instanceof TerminalView) {
+        leaf.view.updateContextBar(this.activeDocContext);
+      }
+    }
+  }
   async activateView() {
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     if (leaves.length) {
@@ -7878,13 +8294,14 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
-  async createNewTab(workingDir = null, yoloMode = false, continueSession = false) {
+  async createNewTab(workingDir = null, yoloMode = false, continueSession = false, profileId = null) {
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
       const state = {};
       if (workingDir) state.workingDir = workingDir;
       if (yoloMode) state.yoloMode = yoloMode;
       if (continueSession) state.continueSession = continueSession;
+      if (profileId) state.profileId = profileId;
       await leaf.setViewState({
         type: VIEW_TYPE,
         active: true,
