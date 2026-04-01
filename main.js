@@ -7164,7 +7164,8 @@ var TerminalView = class extends import_obsidian.ItemView {
       fontSize: 13,
       fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', monospace",
       theme: this.getThemeColors(),
-      scrollback: 10000
+      scrollback: 10000,
+      macOptionIsMeta: false
     });
     this.fitAddon = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fitAddon);
@@ -7258,6 +7259,10 @@ var TerminalView = class extends import_obsidian.ItemView {
         return false; // Block both keydown and keypress
       }
       if (ev.type === 'keydown') {
+        // macOS: let Option+key through for international keyboard layouts (e.g. Opt+Q = @ on Spanish)
+        if (process.platform === 'darwin' && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+          return true;
+        }
         // Windows Ctrl+V: paste from clipboard (Obsidian intercepts this before xterm sees it)
         if (ev.key === 'v' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
           ev.preventDefault();
