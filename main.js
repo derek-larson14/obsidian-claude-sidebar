@@ -7259,8 +7259,17 @@ var TerminalView = class extends import_obsidian.ItemView {
         return false; // Block both keydown and keypress
       }
       if (ev.type === 'keydown') {
-        // macOS: let Option+key through for international keyboard layouts (e.g. Opt+Q = @ on Spanish)
+        // macOS: Option+key produces special characters on international keyboards (e.g. Opt+Q = @ on Spanish)
+        // xterm's _isThirdLevelShift relies on keypress events which may not fire in Electron,
+        // so we intercept the keydown and write the OS-transformed character directly.
         if (process.platform === 'darwin' && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
+          if (ev.key && ev.key.length === 1) {
+            ev.preventDefault();
+            if (this.proc && !this.proc.killed) {
+              this.proc.stdin?.write(ev.key);
+            }
+            return false;
+          }
           return true;
         }
         // Windows Ctrl+V: paste from clipboard (Obsidian intercepts this before xterm sees it)
