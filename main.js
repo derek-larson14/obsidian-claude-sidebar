@@ -7659,10 +7659,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.pluginData = {};
   }
   async onload() {
+    this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     this.pluginData = await this.loadData() || {};
     this.lastActiveTerminalLeaf = null;
-
-    this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
+    this.layoutReady = false;
+    this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
 
     // Track the most recently focused Claude tab
     this.registerEvent(
@@ -7928,6 +7929,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     await this.createNewTab();
   }
   async createNewTab(workingDir = null, yoloMode = false, continueSession = false) {
+    if (!this.layoutReady) return;
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
       const state = {};
