@@ -6851,7 +6851,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.app.keymap.pushScope(this.escapeScope);
   }
   async onClose() {
-    this.dispose();
+    try {
+      this.dispose();
+    } catch (err) {
+      console.error("[Claude Sidebar] Error during terminal cleanup:", err);
+    }
   }
   injectCSS() {
     if (document.getElementById("xterm-css"))
@@ -7591,6 +7595,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
   }
   dispose() {
+    if (this._isDisposed) return;
+    this._isDisposed = true;
     this.resizeObserver?.disconnect();
     this.themeObserver?.disconnect();
     if (this.fitTimeout) {
