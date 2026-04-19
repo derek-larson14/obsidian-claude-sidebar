@@ -7541,7 +7541,14 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   stopShell() {
     if (this.proc && !this.proc.killed) {
-      this.proc.kill("SIGTERM");
+      const p = this.proc;
+      p.kill("SIGTERM");
+      const t = setTimeout(() => {
+        if (p.exitCode === null) {
+          try { p.kill("SIGKILL"); } catch (_) {}
+        }
+      }, 1500);
+      p.once("exit", () => clearTimeout(t));
       this.proc = null;
     }
     // Flush any remaining buffered bytes from decoders
