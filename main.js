@@ -6862,18 +6862,35 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
       return true; // Let Obsidian handle it normally
     });
-    // Ctrl+O: Claude Code "expand command preview". Explicit 'Ctrl' (not 'Mod')
-    // so Mac still gets Cmd+O → Obsidian Quick Switcher untouched.
-    this.escapeScope.register(['Ctrl'], 'o', () => {
-      if (this.containerEl.contains(document.activeElement)) {
-        if (this.proc && !this.proc.killed) {
-          this.proc.stdin?.write('\x0f');
-        }
-        return false;
-      }
-      return true;
-    });
     this.app.keymap.pushScope(this.escapeScope);
+    // Ctrl+O: Claude Code "expand command preview". Only register the binding
+    // while focus is inside the sidebar — once Obsidian's Scope owns a key,
+    // returning true does not fall through to the built-in Quick Switcher
+    // (Ctrl+O on Linux/Windows), so leaving it registered globally breaks it.
+    this.ctrlOBinding = null;
+    this.ctrlOFocusIn = () => {
+      if (!this.ctrlOBinding) {
+        this.ctrlOBinding = this.escapeScope.register(['Ctrl'], 'o', () => {
+          if (this.proc && !this.proc.killed) {
+            this.proc.stdin?.write('\x0f');
+          }
+          return false;
+        });
+      }
+    };
+    this.ctrlOFocusOut = () => {
+      setTimeout(() => {
+        if (this.ctrlOBinding && !this.containerEl.contains(document.activeElement)) {
+          this.escapeScope.unregister(this.ctrlOBinding);
+          this.ctrlOBinding = null;
+        }
+      }, 0);
+    };
+    this.containerEl.addEventListener('focusin', this.ctrlOFocusIn);
+    this.containerEl.addEventListener('focusout', this.ctrlOFocusOut);
+    if (this.containerEl.contains(document.activeElement)) {
+      this.ctrlOFocusIn();
+    }
   }
   async onClose() {
     try {
@@ -7583,7 +7600,19 @@ var TerminalView = class extends import_obsidian.ItemView {
       clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
     }
+    if (this.ctrlOFocusIn) {
+      this.containerEl.removeEventListener('focusin', this.ctrlOFocusIn);
+      this.ctrlOFocusIn = null;
+    }
+    if (this.ctrlOFocusOut) {
+      this.containerEl.removeEventListener('focusout', this.ctrlOFocusOut);
+      this.ctrlOFocusOut = null;
+    }
     if (this.escapeScope) {
+      if (this.ctrlOBinding) {
+        this.escapeScope.unregister(this.ctrlOBinding);
+        this.ctrlOBinding = null;
+      }
       this.app.keymap.popScope(this.escapeScope);
       this.escapeScope = null;
     }
