@@ -8,9 +8,9 @@ Built by [Derek Larson](https://dtlarson.com) - [Pair with commands →](https:/
 
 ## Features
 
-- **Embedded terminal** - Full terminal in your Obsidian sidebar
 - **Auto-launches Claude** - Claude Code starts automatically
 - **Multiple tabs** - Run multiple Claude instances side by side
+- **Embedded Claude** - Full terminal with Claude in your Obsidian sidebar
 - **Folder context menu** - Right-click any folder to open Claude in that directory
 - **YOLO mode** - Launch Claude with `--dangerously-skip-permissions` via right-click menus
 - **Multi-backend** - Switch between Claude Code, Codex, OpenCode, and Gemini CLI in settings
@@ -58,7 +58,9 @@ Once approved, you'll be able to search for "Claude Sidebar" in Community Plugin
 
 Paste into a Claude Code session from your vault:
 
-> Update the Claude Sidebar plugin. Download main.js, manifest.json, and styles.css from https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/ into .obsidian/plugins/claude-sidebar/. Tell me the old and new version numbers.
+```
+Update the Claude Sidebar plugin. Download main.js, manifest.json, and styles.css from https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/ into .obsidian/plugins/claude-sidebar/. Tell me the old and new version numbers.
+```
 
 ### Manual
 
@@ -94,11 +96,11 @@ https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 |----------|--------|
 | macOS | ✅ Supported |
 | Linux | ✅ Supported |
-| Windows | ⚠️ Experimental |
+| Windows | ✅ Supported |
 
 Want to use it on iOS or Android? See [Claude Anywhere](https://github.com/derek-larson14/claude-anywhere).
 
-### Windows Setup (Experimental)
+### Windows Setup
 
 Windows requires additional dependencies:
 
@@ -114,8 +116,6 @@ $u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip";
 ```
 
 4. Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude Sidebar"
-
-**Note:** Windows support is experimental. Performance may be slower than macOS/Linux due to ConPTY overhead.
 
 ## How It Works
 
