@@ -6862,6 +6862,17 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
       return true; // Let Obsidian handle it normally
     });
+    // Ctrl+O: Claude Code "expand command preview". Explicit 'Ctrl' (not 'Mod')
+    // so Mac still gets Cmd+O → Obsidian Quick Switcher untouched.
+    this.escapeScope.register(['Ctrl'], 'o', () => {
+      if (this.containerEl.contains(document.activeElement)) {
+        if (this.proc && !this.proc.killed) {
+          this.proc.stdin?.write('\x0f');
+        }
+        return false;
+      }
+      return true;
+    });
     this.app.keymap.pushScope(this.escapeScope);
   }
   async onClose() {
@@ -7222,17 +7233,6 @@ var TerminalView = class extends import_obsidian.ItemView {
         }).catch(() => {});
       });
     }
-    // Shortcuts Claude Code handles inside the terminal — stop them from bubbling
-    // up to Obsidian's hotkey system when the terminal is focused.
-    // preventDefault is NOT called: xterm still needs to deliver the keystroke to the PTY.
-    this.terminalShortcutGuard = (ev) => {
-      if (!this.containerEl.contains(document.activeElement)) return;
-      // Ctrl+O (no other modifiers): Claude Code "expand command preview"
-      if (ev.key === 'o' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
-        ev.stopPropagation();
-      }
-    };
-    document.addEventListener('keydown', this.terminalShortcutGuard, true);
     this.term.attachCustomKeyEventHandler((ev) => {
       // Shift+Enter: send Alt+Enter for multi-line input
       // Must block both keydown and keypress events to prevent xterm from sending normal Enter
@@ -7590,10 +7590,6 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.imagePasteHandler) {
       document.removeEventListener("paste", this.imagePasteHandler, true);
       this.imagePasteHandler = null;
-    }
-    if (this.terminalShortcutGuard) {
-      document.removeEventListener('keydown', this.terminalShortcutGuard, true);
-      this.terminalShortcutGuard = null;
     }
     if (this.fileDragOverHandler && this.termHost) {
       this.termHost.removeEventListener('dragover', this.fileDragOverHandler);
