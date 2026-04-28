@@ -6863,33 +6863,44 @@ var TerminalView = class extends import_obsidian.ItemView {
       return true; // Let Obsidian handle it normally
     });
     this.app.keymap.pushScope(this.escapeScope);
-    // Ctrl+O: Claude Code "expand command preview". Only register the binding
-    // while focus is inside the sidebar — once Obsidian's Scope owns a key,
-    // returning true does not fall through to the built-in Quick Switcher
-    // (Ctrl+O on Linux/Windows), so leaving it registered globally breaks it.
-    this.ctrlOBinding = null;
-    this.ctrlOFocusIn = () => {
-      if (!this.ctrlOBinding) {
-        this.ctrlOBinding = this.escapeScope.register(['Ctrl'], 'o', () => {
-          if (this.proc && !this.proc.killed) {
-            this.proc.stdin?.write('\x0f');
+    this.ctrlAllBinding = null;
+    this.ctrlAllFocusIn = () => {
+      if (!this.ctrlAllBinding) {
+        this.ctrlAllBinding = this.escapeScope.register(['Ctrl'], null, (ev) => {
+          if (this.containerEl.contains(document.activeElement)) {
+            if (ev && ev.key && ev.key.length === 1 && !ev.altKey && !ev.metaKey) {
+              if (!ev.shiftKey) {
+                const code = ev.key.toUpperCase().charCodeAt(0) - 64;
+                if (code >= 1 && code <= 26) {
+                  if (this.proc && !this.proc.killed) this.proc.stdin?.write(String.fromCharCode(code));
+                  this.term?.focus();
+                }
+              } else if (ev.shiftKey && ev.key.toLowerCase() === 'c') {
+                const sel = this.term?.getSelection();
+                if (sel) {
+                  try { require('electron').clipboard.writeText(sel); }
+                  catch (_) { navigator.clipboard?.writeText(sel).catch(() => {}); }
+                }
+              }
+            }
+            return false;
           }
-          return false;
+          return true;
         });
       }
     };
-    this.ctrlOFocusOut = () => {
+    this.ctrlAllFocusOut = () => {
       setTimeout(() => {
-        if (this.ctrlOBinding && !this.containerEl.contains(document.activeElement)) {
-          this.escapeScope.unregister(this.ctrlOBinding);
-          this.ctrlOBinding = null;
+        if (this.ctrlAllBinding && !this.containerEl.contains(document.activeElement)) {
+          this.escapeScope.unregister(this.ctrlAllBinding);
+          this.ctrlAllBinding = null;
         }
       }, 0);
     };
-    this.containerEl.addEventListener('focusin', this.ctrlOFocusIn);
-    this.containerEl.addEventListener('focusout', this.ctrlOFocusOut);
+    this.containerEl.addEventListener('focusin', this.ctrlAllFocusIn);
+    this.containerEl.addEventListener('focusout', this.ctrlAllFocusOut);
     if (this.containerEl.contains(document.activeElement)) {
-      this.ctrlOFocusIn();
+      this.ctrlAllFocusIn();
     }
   }
   async onClose() {
@@ -7164,6 +7175,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       return;
     this.term = new import_xterm.Terminal({
       cursorBlink: true,
+      copyOnSelect: true,
       fontSize: 13,
       fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', monospace",
       theme: this.getThemeColors(),
@@ -7240,68 +7252,60 @@ var TerminalView = class extends import_obsidian.ItemView {
     };
     this.termHost.addEventListener('dragover', this.fileDragOverHandler);
     this.termHost.addEventListener('drop', this.fileDropHandler);
-    // Windows right-click paste: Windows terminal convention is right-click = paste
-    if (process.platform === 'win32') {
-      this.termHost.addEventListener('contextmenu', (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        navigator.clipboard.readText().then((text) => {
-          if (text) this.term.paste(text);
-        }).catch(() => {});
-      });
-    }
+    this.termContextMenuHandler = (e) => {
+      e.preventDefault();
+      const menu = new import_obsidian.Menu();
+      const sel = this.term?.getSelection() || "";
+      menu.addItem((i) => i.setTitle("Copy").setIcon("copy").setDisabled(!sel).onClick(() => {
+        try { require("electron").clipboard.writeText(sel); }
+        catch (_) { navigator.clipboard?.writeText(sel); }
+      }));
+      menu.addItem((i) => i.setTitle("Paste").setIcon("clipboard").onClick(async () => {
+        let text = "";
+        try { text = require("electron").clipboard.readText() || ""; }
+        catch (_) { text = (await navigator.clipboard?.readText?.().catch(() => {})) || ""; }
+        if (text && this.proc && !this.proc.killed) this.proc.stdin?.write(text);
+      }));
+      menu.showAtMouseEvent(e);
+    };
+    this.termHost.addEventListener("contextmenu", this.termContextMenuHandler);
     this.term.attachCustomKeyEventHandler((ev) => {
-      // Shift+Enter: send Alt+Enter for multi-line input
-      // Must block both keydown and keypress events to prevent xterm from sending normal Enter
       if (ev.key === 'Enter' && ev.shiftKey) {
         if (ev.type === 'keydown') {
-          if (this.proc && !this.proc.killed) {
-            this.proc.stdin?.write('\x1b\r');
-          }
+          if (this.proc && !this.proc.killed) this.proc.stdin?.write('\x1b\r');
         }
-        return false; // Block both keydown and keypress
+        return false;
       }
       if (ev.type === 'keydown') {
-        // macOS: Option+key produces special characters on international keyboards (e.g. Opt+Q = @ on Spanish)
-        // xterm's _isThirdLevelShift relies on keypress events which may not fire in Electron,
-        // so we intercept the keydown and write the OS-transformed character directly.
-        if (process.platform === 'darwin' && ev.altKey && !ev.metaKey && !ev.ctrlKey) {
-          if (ev.key && ev.key.length === 1) {
+        // Forward all Ctrl+[A-Z] to PTY; Obsidian intercepts many of these as global hotkeys
+        if (ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey && ev.key.length === 1) {
+          const code = ev.key.toUpperCase().charCodeAt(0) - 64;
+          if (code >= 1 && code <= 26) {
             ev.preventDefault();
-            this.term.paste(ev.key);
+            ev.stopPropagation();
+            ev.stopImmediatePropagation();
             return false;
           }
-          return true;
         }
-        // Windows Ctrl+V: paste from clipboard (Obsidian intercepts this before xterm sees it)
-        if (ev.key === 'v' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
-          ev.preventDefault();
-          navigator.clipboard.readText().then((text) => {
-            if (text) this.term.paste(text);
-          }).catch(() => {});
-          return false;
-        }
-        // Windows Ctrl+C: copy selection or send interrupt
-        if (ev.key === 'c' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
-          ev.preventDefault();
-          const selection = this.term.getSelection();
-          if (selection) {
-            navigator.clipboard.writeText(selection).catch(() => {});
-          } else {
-            this.proc?.stdin?.write('\x03');
+        // Ctrl+Shift+C / Cmd+C - copy terminal selection to clipboard
+        const isCopy =
+          (ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey && ev.key.toLowerCase() === 'c') ||
+          (ev.metaKey && !ev.ctrlKey && !ev.altKey && ev.key.toLowerCase() === 'c');
+        if (isCopy) {
+          const sel = this.term?.getSelection();
+          if (sel) {
+            try { require('electron').clipboard.writeText(sel); }
+            catch (_) { navigator.clipboard?.writeText(sel); }
           }
+          ev.preventDefault();
+          ev.stopPropagation();
+          ev.stopImmediatePropagation();
           return false;
         }
-        // Cmd+Arrow: readline shortcuts for line navigation
+        // macOS readline shortcuts
         if (ev.metaKey) {
-          if (ev.key === 'ArrowRight') {
-            this.proc?.stdin?.write('\x05'); // Ctrl+E = end of line
-            return false;
-          }
-          if (ev.key === 'ArrowLeft') {
-            this.proc?.stdin?.write('\x01'); // Ctrl+A = start of line
-            return false;
-          }
+          if (ev.key === 'ArrowRight') { this.proc?.stdin?.write('\x05'); return false; }
+          if (ev.key === 'ArrowLeft')  { this.proc?.stdin?.write('\x01'); return false; }
         }
       }
       return true;
@@ -7600,19 +7604,19 @@ var TerminalView = class extends import_obsidian.ItemView {
       clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
     }
-    if (this.ctrlOFocusIn) {
-      this.containerEl.removeEventListener('focusin', this.ctrlOFocusIn);
-      this.ctrlOFocusIn = null;
+    if (this.ctrlAllFocusIn) {
+      this.containerEl.removeEventListener('focusin', this.ctrlAllFocusIn);
+      this.ctrlAllFocusIn = null;
     }
-    if (this.ctrlOFocusOut) {
-      this.containerEl.removeEventListener('focusout', this.ctrlOFocusOut);
-      this.ctrlOFocusOut = null;
+    if (this.ctrlAllFocusOut) {
+      this.containerEl.removeEventListener('focusout', this.ctrlAllFocusOut);
+      this.ctrlAllFocusOut = null;
+    }
+    if (this.ctrlAllBinding) {
+      this.escapeScope.unregister(this.ctrlAllBinding);
+      this.ctrlAllBinding = null;
     }
     if (this.escapeScope) {
-      if (this.ctrlOBinding) {
-        this.escapeScope.unregister(this.ctrlOBinding);
-        this.ctrlOBinding = null;
-      }
       this.app.keymap.popScope(this.escapeScope);
       this.escapeScope = null;
     }
@@ -7623,6 +7627,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.fileDragOverHandler && this.termHost) {
       this.termHost.removeEventListener('dragover', this.fileDragOverHandler);
       this.fileDragOverHandler = null;
+    }
+    if (this.termContextMenuHandler && this.termHost) {
+      this.termHost.removeEventListener("contextmenu", this.termContextMenuHandler);
+      this.termContextMenuHandler = null;
     }
     if (this.fileDropHandler && this.termHost) {
       this.termHost.removeEventListener('drop', this.fileDropHandler);
