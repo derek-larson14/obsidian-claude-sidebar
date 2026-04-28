@@ -6706,6 +6706,22 @@ var path = __toESM(require("path"));
 var fs = __toESM(require("fs"));
 var { StringDecoder } = require("string_decoder");
 var VIEW_TYPE = "vault-terminal";
+var PLAIN_LAUNCH_CMD = "claude --ide";
+var TMUX_LAUNCH_CMD = "tmux new-session -A -s obsidian 'claude --ide'";
+// Returns the effective launch command for the current mode.
+function resolveLaunchCommand(pluginData, defaultCmd) {
+  if (pluginData.launchMode === "tmux") {
+    if (defaultCmd) {
+      const escaped = String(defaultCmd).replace(/'/g, "'\\''");
+      return `tmux new-session -A -s obsidian '${escaped}'`;
+    }
+    return TMUX_LAUNCH_CMD;
+  }
+  if (pluginData.launchMode === "custom") {
+    return pluginData.launchCommand || defaultCmd || PLAIN_LAUNCH_CMD;
+  }
+  return defaultCmd || PLAIN_LAUNCH_CMD;
+}
 var CLI_BACKENDS = {
   claude: {
     label: "Claude Code",
@@ -7451,6 +7467,8 @@ var TerminalView = class extends import_obsidian.ItemView {
         cliCmd += " " + backend.resumeFlag;
       }
     }
+    cliCmd = resolveLaunchCommand(this.plugin.pluginData, cliCmd);
+    baseCmd = resolveLaunchCommand(this.plugin.pluginData, baseCmd);
     const shellCmd = continueSession
       ? `${cliCmd} || ${baseCmd} || true; exec $SHELL -i`
       : `${cliCmd} || true; exec $SHELL -i`;
@@ -7460,6 +7478,11 @@ var TerminalView = class extends import_obsidian.ItemView {
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
     let shellEnv = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+    delete shellEnv.TMUX;
+    delete shellEnv.TMUX_PANE;
+    delete shellEnv.STY;
+    delete shellEnv.ZELLIJ;
+    delete shellEnv.ZELLIJ_SESSION_NAME;
     if (!isWindows) {
       try {
         const shellOutput = (0, import_child_process.execSync)(
@@ -7562,6 +7585,7 @@ var TerminalView = class extends import_obsidian.ItemView {
         if (this.proc && !this.proc.killed) {
           let winCmd = backend.binary;
           if (yoloMode && backend.yoloFlag) winCmd += ' ' + backend.yoloFlag;
+          winCmd = resolveLaunchCommand(this.plugin.pluginData, winCmd);
           this.proc.stdin?.write(winCmd + '\r');
         }
       }, 1000);
@@ -7675,6 +7699,51 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
           this.plugin.pluginData.additionalFlags = value.trim() || null;
           await this.plugin.saveData(this.plugin.pluginData);
         }));
+    let launchCmdTextComponent;
+    let launchModeDropdownComponent;
+    new import_obsidian.Setting(containerEl)
+      .setName("Launch mode")
+      .setDesc("How to launch Claude in the terminal.")
+      .addDropdown((drop) => {
+        launchModeDropdownComponent = drop;
+        drop
+          .addOption("default", "Default")
+          .addOption("tmux", "tmux")
+          .addOption("custom", "Custom")
+          .setValue(this.plugin.pluginData.launchMode || "default")
+          .onChange(async (value) => {
+            this.plugin.pluginData.launchMode = value;
+            if (launchCmdTextComponent) {
+              const preset = value === "tmux" ? TMUX_LAUNCH_CMD
+                           : value === "default" ? PLAIN_LAUNCH_CMD
+                           : (this.plugin.pluginData.launchCommand || PLAIN_LAUNCH_CMD);
+              launchCmdTextComponent.setValue(preset);
+            }
+            await this.plugin.saveData(this.plugin.pluginData);
+          });
+      });
+    new import_obsidian.Setting(containerEl)
+      .setName("Launch command")
+      .setDesc("The command used to launch Claude. Edit to customise; the mode switches to Custom automatically.")
+      .addText((text) => {
+        launchCmdTextComponent = text;
+        const currentMode = this.plugin.pluginData.launchMode || "default";
+        const effectiveCmd = currentMode === "tmux" ? TMUX_LAUNCH_CMD
+                           : currentMode === "custom" ? (this.plugin.pluginData.launchCommand || PLAIN_LAUNCH_CMD)
+                           : PLAIN_LAUNCH_CMD;
+        text.setPlaceholder("claude --ide")
+          .setValue(effectiveCmd)
+          .onChange(async (value) => {
+            this.plugin.pluginData.launchCommand = value;
+            const mode = this.plugin.pluginData.launchMode || "default";
+            const preset = mode === "tmux" ? TMUX_LAUNCH_CMD : PLAIN_LAUNCH_CMD;
+            if (mode !== "custom" && value !== preset) {
+              this.plugin.pluginData.launchMode = "custom";
+              if (launchModeDropdownComponent) launchModeDropdownComponent.setValue("custom");
+            }
+            await this.plugin.saveData(this.plugin.pluginData);
+          });
+      });
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
@@ -7686,6 +7755,16 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     this.pluginData = await this.loadData() || {};
+    // Migration from v1.7.x boolean openInTmux to launchMode enum.
+    if (typeof this.pluginData.openInTmux !== "undefined") {
+      this.pluginData.launchMode = (this.pluginData.openInTmux && process.platform !== "win32")
+        ? "tmux" : "default";
+      delete this.pluginData.openInTmux;
+    }
+    if (!this.pluginData.launchMode) this.pluginData.launchMode = "default";
+    if (this.pluginData.launchCommand === "tmux new-window 'claude --ide'") {
+      this.pluginData.launchCommand = TMUX_LAUNCH_CMD;
+    }
     this.lastActiveTerminalLeaf = null;
     this.layoutReady = false;
     this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
