@@ -6705,6 +6705,53 @@ var import_child_process = require("child_process");
 var path = __toESM(require("path"));
 var fs = __toESM(require("fs"));
 var { StringDecoder } = require("string_decoder");
+
+// CM6 gutter extension: accent bar marking selected lines, persists after editor blur.
+var import_cm_state = require("@codemirror/state");
+var import_cm_view = require("@codemirror/view");
+
+var setSelectionGutterRange = import_cm_state.StateEffect.define();
+
+var selectionGutterRangeField = import_cm_state.StateField.define({
+  create() { return null; },
+  update(value, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(setSelectionGutterRange)) {
+        return effect.value;
+      }
+    }
+    return value;
+  }
+});
+
+var SelectionGutterMarker = class extends import_cm_view.GutterMarker {
+  toDOM() {
+    const el = document.createElement("div");
+    el.className = "claude-selection-gutter-marker";
+    return el;
+  }
+};
+var SELECTION_GUTTER_MARKER = new SelectionGutterMarker();
+
+var selectionGutterExtension = [
+  selectionGutterRangeField,
+  import_cm_view.gutter({
+    class: "claude-selection-gutter",
+    lineMarker(view, blockInfo) {
+      const range = view.state.field(selectionGutterRangeField, false);
+      if (!range) return null;
+      // blockInfo.from is a document offset; translate to a 1-based line
+      // number via the document API.
+      const lineNo = view.state.doc.lineAt(blockInfo.from).number;
+      if (lineNo >= range.from && lineNo <= range.to) {
+        return SELECTION_GUTTER_MARKER;
+      }
+      return null;
+    },
+    initialSpacer() { return SELECTION_GUTTER_MARKER; }
+  })
+];
+
 var VIEW_TYPE = "vault-terminal";
 var CLI_BACKENDS = {
   claude: {
@@ -6748,6 +6795,11 @@ var CLI_BACKENDS = {
     resumeIsSubcommand: false,
   },
 };
+// Only start the IDE MCP server when Claude is the active backend.
+function isClaudeBackend(pluginData) {
+  const backend = (pluginData && pluginData.cliBackend) || "claude";
+  return backend === "claude";
+}
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
     super(leaf);
@@ -7634,6 +7686,765 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.fitAddon = null;
   }
 };
+
+// Claude Code IDE MCP server: implements the IDE half of the Claude Code CLI
+// integration protocol (WebSocket + JSON-RPC 2.0 + MCP tool envelopes). When the
+// plugin is loaded, the server writes ~/.claude/ide/<port>.lock so that
+// `claude --ide` launched from the plugin's terminal auto-connects and receives
+// selection / editor context from Obsidian in real time.
+var ObsidianIdeMcpServer = class {
+  constructor(app, plugin) {
+    this.app = app;
+    this.plugin = plugin || null; // needed for registerEditorExtension
+    this.port = null;
+    this.authToken = null;
+    this.lockFilePath = null;
+    this.server = null;        // http.Server (native path) or ws.WebSocketServer (ws path)
+    this.httpServer = null;    // underlying http.Server (ws path only)
+    this.clients = new Set();  // ws library → WebSocket instances; native path → { socket, send, close }
+    this.useWsLibrary = false;
+    this.WS = null;            // ws module reference when available
+    this.eventRefs = [];       // Obsidian EventRef handles for offref()
+    this.selectionDebounceTimer = null;
+    this.vaultPath = "";
+    this.lastSelection = null;
+    this.domSelectionListeners = [];
+  }
+
+  start(vaultPath) {
+    this.vaultPath = vaultPath || "";
+    const crypto = require("crypto");
+    const fs = require("fs");
+    const path = require("path");
+    const os = require("os");
+
+    // Try the ws package first; fall back to manual WebSocket frames over raw http.
+    try {
+      this.WS = require("ws");
+      this.useWsLibrary = true;
+    } catch (e) {
+      this.useWsLibrary = false;
+    }
+
+    this.authToken = (crypto.randomUUID && crypto.randomUUID()) ||
+      `${Date.now()}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+
+    // Pick a random high port. On EADDRINUSE we retry up to a few times.
+    const pickPort = () => Math.floor(Math.random() * 55536) + 10000;
+
+    const listen = (attemptsLeft) => {
+      const tryPort = pickPort();
+      this._startServerOnPort(tryPort, (err) => {
+        if (err) {
+          if (attemptsLeft > 0 && (err.code === "EADDRINUSE" || err.code === "EACCES")) {
+            listen(attemptsLeft - 1);
+          } else {
+            console.error("[claude-sidebar] IDE MCP server failed to listen:", err);
+          }
+          return;
+        }
+        this.port = tryPort;
+        // Write lock file for Claude Code CLI discovery.
+        const ideDir = path.join(os.homedir(), ".claude", "ide");
+        try { fs.mkdirSync(ideDir, { recursive: true }); } catch (_) {}
+        this.lockFilePath = path.join(ideDir, this.port + ".lock");
+        const lock = {
+          pid: process.pid,
+          workspaceFolders: [this.vaultPath],
+          ideName: "Obsidian",
+          transport: "ws",
+          runningInWindows: process.platform === "win32",
+          authToken: this.authToken
+        };
+        try {
+          fs.writeFileSync(this.lockFilePath, JSON.stringify(lock));
+        } catch (e) {
+          console.error("[claude-sidebar] Failed to write IDE lock file:", e);
+        }
+        this._registerSelectionListeners();
+        console.log(`[claude-sidebar] IDE MCP server listening on 127.0.0.1:${this.port} (transport=${this.useWsLibrary ? "ws-lib" : "native"})`);
+      });
+    };
+    listen(5);
+  }
+
+  _startServerOnPort(port, cb) {
+    if (this.useWsLibrary) {
+      this._startWithWsLibrary(port, cb);
+    } else {
+      this._startWithNativeHttp(port, cb);
+    }
+  }
+
+  _startWithWsLibrary(port, cb) {
+    const http = require("http");
+    this.httpServer = http.createServer();
+    this.server = new this.WS.WebSocketServer({
+      noServer: true
+    });
+    this.httpServer.on("upgrade", (req, socket, head) => {
+      const token = req.headers["x-claude-code-ide-authorization"];
+      if (!token || token !== this.authToken) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      this.server.handleUpgrade(req, socket, head, (ws) => {
+        this._attachWsLibraryClient(ws);
+      });
+    });
+    this.httpServer.once("error", (err) => cb(err));
+    this.httpServer.listen(port, "127.0.0.1", () => {
+      this.httpServer.removeAllListeners("error");
+      this.httpServer.on("error", (err) => {
+        console.error("[claude-sidebar] IDE MCP http error:", err);
+      });
+      cb(null);
+    });
+  }
+
+  _attachWsLibraryClient(ws) {
+    this.clients.add(ws);
+    ws.on("message", (data) => {
+      let text;
+      try { text = typeof data === "string" ? data : data.toString("utf8"); } catch (_) { return; }
+      this._handleJsonRpcMessage(text, (reply) => {
+        try { ws.send(reply); } catch (_) {}
+      });
+    });
+    ws.on("close", () => { this.clients.delete(ws); });
+    ws.on("error", () => { this.clients.delete(ws); });
+  }
+
+  _startWithNativeHttp(port, cb) {
+    const http = require("http");
+    const crypto = require("crypto");
+    const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+
+    this.httpServer = http.createServer((req, res) => {
+      res.writeHead(426, { "Content-Type": "text/plain" });
+      res.end("Upgrade Required");
+    });
+    this.server = this.httpServer;
+
+    this.httpServer.on("upgrade", (req, socket) => {
+      const token = req.headers["x-claude-code-ide-authorization"];
+      if (!token || token !== this.authToken) {
+        socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+        socket.destroy();
+        return;
+      }
+      const key = req.headers["sec-websocket-key"];
+      if (!key) { socket.destroy(); return; }
+      const accept = crypto.createHash("sha1").update(key + WS_GUID).digest("base64");
+      const headers = [
+        "HTTP/1.1 101 Switching Protocols",
+        "Upgrade: websocket",
+        "Connection: Upgrade",
+        `Sec-WebSocket-Accept: ${accept}`
+      ];
+      const proto = req.headers["sec-websocket-protocol"];
+      if (proto && proto.split(",").map(s => s.trim()).includes("mcp")) {
+        headers.push("Sec-WebSocket-Protocol: mcp");
+      }
+      socket.write(headers.join("\r\n") + "\r\n\r\n");
+      socket.setNoDelay(true);
+      this._attachNativeClient(socket);
+    });
+
+    this.httpServer.once("error", (err) => cb(err));
+    this.httpServer.listen(port, "127.0.0.1", () => {
+      this.httpServer.removeAllListeners("error");
+      this.httpServer.on("error", (err) => {
+        console.error("[claude-sidebar] IDE MCP http error:", err);
+      });
+      cb(null);
+    });
+  }
+
+  // Minimal RFC 6455 WebSocket framing sufficient for MCP text traffic.
+  // Handles single-frame and fragmented text/binary messages; replies with
+  // pong on ping, cleans up on close. Ignores payloads larger than 64 MiB.
+  _attachNativeClient(socket) {
+    const client = {
+      socket,
+      buffer: Buffer.alloc(0),
+      fragments: [],
+      fragmentOpcode: 0,
+      closed: false,
+      send: (text) => this._sendNativeFrame(socket, text),
+      close: () => { try { socket.end(); } catch (_) {} }
+    };
+    this.clients.add(client);
+
+    socket.on("data", (chunk) => {
+      client.buffer = Buffer.concat([client.buffer, chunk]);
+      this._drainNativeFrames(client);
+    });
+    const cleanup = () => {
+      if (client.closed) return;
+      client.closed = true;
+      this.clients.delete(client);
+      try { socket.destroy(); } catch (_) {}
+    };
+    socket.on("close", cleanup);
+    socket.on("error", cleanup);
+    socket.on("end", cleanup);
+  }
+
+  _drainNativeFrames(client) {
+    const MAX_PAYLOAD = 64 * 1024 * 1024;
+    while (true) {
+      const buf = client.buffer;
+      if (buf.length < 2) return;
+      const b0 = buf[0], b1 = buf[1];
+      const fin = (b0 & 0x80) !== 0;
+      const opcode = b0 & 0x0f;
+      const masked = (b1 & 0x80) !== 0;
+      let len = b1 & 0x7f;
+      let offset = 2;
+      if (len === 126) {
+        if (buf.length < offset + 2) return;
+        len = buf.readUInt16BE(offset); offset += 2;
+      } else if (len === 127) {
+        if (buf.length < offset + 8) return;
+        // JS numbers are safe up to 2^53; WebSocket payload fits comfortably.
+        const hi = buf.readUInt32BE(offset);
+        const lo = buf.readUInt32BE(offset + 4);
+        len = hi * 0x100000000 + lo;
+        offset += 8;
+      }
+      if (len > MAX_PAYLOAD) {
+        try { client.socket.destroy(); } catch (_) {}
+        return;
+      }
+      let maskKey = null;
+      if (masked) {
+        if (buf.length < offset + 4) return;
+        maskKey = buf.slice(offset, offset + 4);
+        offset += 4;
+      }
+      if (buf.length < offset + len) return;
+      let payload = buf.slice(offset, offset + len);
+      if (masked && maskKey) {
+        payload = Buffer.from(payload); // copy so we can mutate
+        for (let i = 0; i < payload.length; i++) payload[i] ^= maskKey[i & 3];
+      }
+      client.buffer = buf.slice(offset + len);
+
+      // Handle control frames inline.
+      if (opcode === 0x8) {
+        // close
+        try { client.socket.end(); } catch (_) {}
+        return;
+      } else if (opcode === 0x9) {
+        // ping → pong (echo payload, unmasked server frame, opcode 0xA)
+        this._sendNativeFrameRaw(client.socket, 0xA, payload);
+        continue;
+      } else if (opcode === 0xA) {
+        // pong, ignore
+        continue;
+      }
+
+      // Data frame: 0x0 continuation, 0x1 text, 0x2 binary.
+      if (opcode === 0x1 || opcode === 0x2) {
+        client.fragments = [payload];
+        client.fragmentOpcode = opcode;
+      } else if (opcode === 0x0) {
+        client.fragments.push(payload);
+      } else {
+        // Unknown non-control opcode; ignore.
+        continue;
+      }
+      if (fin) {
+        const full = Buffer.concat(client.fragments);
+        client.fragments = [];
+        if (client.fragmentOpcode === 0x1) {
+          const text = full.toString("utf8");
+          this._handleJsonRpcMessage(text, (reply) => {
+            this._sendNativeFrame(client.socket, reply);
+          });
+        }
+        // binary is not used by MCP; ignored.
+      }
+    }
+  }
+
+  _sendNativeFrame(socket, text) {
+    const payload = Buffer.from(String(text), "utf8");
+    this._sendNativeFrameRaw(socket, 0x1, payload);
+  }
+
+  // opcode 0x1 = text, 0xA = pong. Server frames are never masked.
+  _sendNativeFrameRaw(socket, opcode, payload) {
+    if (!socket || socket.destroyed) return;
+    const len = payload.length;
+    let header;
+    if (len < 126) {
+      header = Buffer.alloc(2);
+      header[0] = 0x80 | (opcode & 0x0f);
+      header[1] = len;
+    } else if (len < 0x10000) {
+      header = Buffer.alloc(4);
+      header[0] = 0x80 | (opcode & 0x0f);
+      header[1] = 126;
+      header.writeUInt16BE(len, 2);
+    } else {
+      header = Buffer.alloc(10);
+      header[0] = 0x80 | (opcode & 0x0f);
+      header[1] = 127;
+      header.writeUInt32BE(Math.floor(len / 0x100000000), 2);
+      header.writeUInt32BE(len >>> 0, 6);
+    }
+    try {
+      socket.write(Buffer.concat([header, payload]));
+    } catch (_) {}
+  }
+
+  _handleJsonRpcMessage(text, reply) {
+    let msg;
+    try { msg = JSON.parse(text); } catch (e) {
+      reply(JSON.stringify({
+        jsonrpc: "2.0",
+        id: null,
+        error: { code: -32700, message: "Parse error" }
+      }));
+      return;
+    }
+    const { id, method, params } = msg || {};
+    if (method === "initialize") {
+      reply(JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "obsidian-ide", version: "1.0.0" }
+        }
+      }));
+      return;
+    }
+    if (method === "notifications/initialized" || method === "initialized") {
+      // no response
+      return;
+    }
+    if (method === "tools/list") {
+      reply(JSON.stringify({
+        jsonrpc: "2.0",
+        id,
+        result: { tools: this._toolDefinitions() }
+      }));
+      return;
+    }
+    if (method === "tools/call") {
+      const toolName = params && params.name;
+      const args = (params && params.arguments) || {};
+      this._handleToolCall(toolName, args)
+        .then((result) => {
+          reply(JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            result: {
+              content: [{ type: "text", text: JSON.stringify(result) }]
+            }
+          }));
+        })
+        .catch((err) => {
+          reply(JSON.stringify({
+            jsonrpc: "2.0",
+            id,
+            error: { code: -32603, message: String(err && err.message || err) }
+          }));
+        });
+      return;
+    }
+    // Notifications have no id and expect no response.
+    if (typeof id === "undefined") return;
+    reply(JSON.stringify({
+      jsonrpc: "2.0",
+      id,
+      error: { code: -32601, message: `Method not found: ${method}` }
+    }));
+  }
+
+  _toolDefinitions() {
+    return [
+      {
+        name: "getCurrentSelection",
+        description: "Get the currently selected text in Obsidian",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "getLatestSelection",
+        description: "Get the most recent text selection",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "getOpenEditors",
+        description: "Get currently open editors",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "getWorkspaceFolders",
+        description: "Get all workspace folders",
+        inputSchema: { type: "object", properties: {} }
+      },
+      {
+        name: "openFile",
+        description: "Open a file in Obsidian",
+        inputSchema: {
+          type: "object",
+          properties: {
+            filePath: { type: "string" },
+            preview: { type: "boolean" },
+            startText: { type: "string" },
+            endText: { type: "string" }
+          },
+          required: ["filePath"]
+        }
+      }
+    ];
+  }
+
+  async _handleToolCall(name, args) {
+    switch (name) {
+      case "getCurrentSelection":
+        return this._readLiveSelection();
+      case "getLatestSelection":
+        return this._buildSelectionPayload();
+      case "getOpenEditors":
+        return this._buildOpenEditors();
+      case "getWorkspaceFolders":
+        return [this.vaultPath];
+      case "openFile":
+        return await this._openFile(args || {});
+      default:
+        throw new Error(`Unknown tool: ${name}`);
+    }
+  }
+
+  _readLiveSelection() {
+    const empty = {
+      text: "",
+      filePath: "",
+      fileUrl: "",
+      selection: {
+        start: { line: 0, character: 0 },
+        end: { line: 0, character: 0 },
+        isEmpty: true
+      }
+    };
+    try {
+      const editor = this.app.workspace.activeEditor && this.app.workspace.activeEditor.editor;
+      const file = this.app.workspace.getActiveFile();
+      if (!editor || !file) return empty;
+      const text = editor.getSelection() || "";
+      const from = editor.getCursor("from");
+      const to = editor.getCursor("to");
+      const absPath = this._toAbsolutePath(file.path);
+      return {
+        text,
+        filePath: absPath,
+        fileUrl: this._pathToFileUrl(absPath),
+        selection: {
+          start: { line: from.line + 1, character: from.ch },
+          end: { line: to.line + 1, character: to.ch },
+          isEmpty: text.length === 0
+        }
+      };
+    } catch (_) {
+      return empty;
+    }
+  }
+
+  _captureSelection() {
+    const live = this._readLiveSelection();
+    if (live && !live.selection.isEmpty) {
+      this.lastSelection = live;
+      // Paint the gutter for the just-captured range. Lines are already
+      // 1-based in the selection payload (see _readLiveSelection).
+      this._dispatchGutterRange({
+        from: live.selection.start.line,
+        to: live.selection.end.line
+      });
+    }
+  }
+
+  _buildSelectionPayload() {
+    const live = this._readLiveSelection();
+    if (live && !live.selection.isEmpty) return live;
+    return this.lastSelection || live;
+  }
+
+  _buildOpenEditors() {
+    const out = [];
+    try {
+      const leaves = this.app.workspace.getLeavesOfType("markdown");
+      for (const leaf of leaves) {
+        const v = leaf.view;
+        const file = v && v.file;
+        if (file && file.path) {
+          out.push({ filePath: this._toAbsolutePath(file.path) });
+        }
+      }
+    } catch (_) {}
+    return out;
+  }
+
+  async _openFile(args) {
+    const filePath = args.filePath;
+    if (!filePath || typeof filePath !== "string") {
+      throw new Error("openFile: filePath required");
+    }
+    // Accept both absolute and vault-relative paths.
+    let relPath = filePath;
+    if (this.vaultPath && filePath.startsWith(this.vaultPath)) {
+      relPath = filePath.slice(this.vaultPath.length).replace(/^[\\/]+/, "");
+    }
+    const tfile = this.app.vault.getAbstractFileByPath(relPath);
+    if (!tfile) {
+      // Try openLinkText as a fallback; resolves against metadata cache.
+      try {
+        await this.app.workspace.openLinkText(relPath, "", false);
+        return { success: true };
+      } catch (e) {
+        throw new Error(`openFile: file not found: ${relPath}`);
+      }
+    }
+    const leaf = this.app.workspace.getLeaf(false);
+    await leaf.openFile(tfile);
+    return { success: true };
+  }
+
+  _toAbsolutePath(relPath) {
+    if (!relPath) return "";
+    if (!this.vaultPath) return relPath;
+    const sep = this.vaultPath.endsWith("/") || this.vaultPath.endsWith("\\") ? "" : "/";
+    return this.vaultPath + sep + relPath;
+  }
+
+  _pathToFileUrl(absPath) {
+    if (!absPath) return "";
+    const encoded = absPath.split("/").map(seg => encodeURIComponent(seg)).join("/");
+    if (encoded.startsWith("/")) return "file://" + encoded;
+    // Non-Unix path (e.g. Windows): use file:/// prefix.
+    return "file:///" + encoded;
+  }
+
+  _registerSelectionListeners() {
+    const ws = this.app.workspace;
+    const handler = () => this._scheduleBroadcast();
+    // Hold EventRefs; this server manages its own lifecycle.
+    try { this.eventRefs.push(ws.on("editor-change", handler)); } catch (_) {}
+    try { this.eventRefs.push(ws.on("active-leaf-change", handler)); } catch (_) {}
+    try { this.eventRefs.push(ws.on("file-open", handler)); } catch (_) {}
+    this._registerSelectionGutter();
+    this._attachDomBlurCapture();
+  }
+
+  // Register the persistent-selection gutter extension. Obsidian deduplicates
+  // identical extension arrays, but we still guard with a flag so a server
+  // restart doesn't double-register.
+  _registerSelectionGutter() {
+    if (this.plugin._ideGutterExtensionRegistered) return;
+    if (!this.plugin || typeof this.plugin.registerEditorExtension !== "function") return;
+    try {
+      this.plugin.registerEditorExtension(selectionGutterExtension);
+      this.plugin._ideGutterExtensionRegistered = true;
+    } catch (e) {
+      console.error("[claude-sidebar] Failed to register selection gutter extension:", e);
+    }
+  }
+
+  // Dispatch a setSelectionGutterRange effect to the CM6 EditorView backing
+  // the active markdown editor. Range is { from, to } (1-based inclusive
+  // line numbers) or null to clear the marker.
+  _dispatchGutterRange(range) {
+    try {
+      const view = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+      const cm = view && view.editor && view.editor.cm;
+      if (cm && typeof cm.dispatch === "function") {
+        cm.dispatch({ effects: setSelectionGutterRange.of(range) });
+      }
+    } catch (_) {}
+  }
+
+  // Clear the gutter marker on every open markdown editor. Called on stop()
+  // and on file-open / leaf-change so a stale marker doesn't linger when
+  // the user switches files.
+  _clearAllGutterMarkers() {
+    try {
+      const leaves = this.app.workspace.getLeavesOfType("markdown");
+      for (const leaf of leaves) {
+        const v = leaf.view;
+        const cm = v && v.editor && v.editor.cm;
+        if (cm && typeof cm.dispatch === "function") {
+          try {
+            cm.dispatch({ effects: setSelectionGutterRange.of(null) });
+          } catch (_) {}
+        }
+      }
+    } catch (_) {}
+  }
+
+  _attachDomBlurCapture() {
+    // Capture-phase: snapshot before the click moves focus away.
+    const onPointerDown = (evt) => {
+      const t = evt.target;
+      if (!t || !(t instanceof Element)) return;
+      // Click inside the editor: clear our persistent gutter marker so it
+      // doesn't compete visually with the user's new caret/selection. If
+      // the click ends up producing a new range, onPointerUp / onKeyUp
+      // will re-paint via _captureSelection.
+      if (t.closest(".cm-editor") || t.closest(".CodeMirror")) {
+        try {
+          const editorEl = t.closest(".cm-editor");
+          const cm = editorEl && editorEl.cmView && editorEl.cmView.view;
+          if (cm && typeof cm.dispatch === "function") {
+            cm.dispatch({ effects: setSelectionGutterRange.of(null) });
+          } else {
+            // Fallback: clear via the active view if we couldn't reach the
+            // EditorView from the DOM (cmView is an internal CM6 hook and
+            // may change shape).
+            this._dispatchGutterRange(null);
+          }
+        } catch (_) {
+          this._dispatchGutterRange(null);
+        }
+        return;
+      }
+      // Fire for any pointerdown outside the currently-focused markdown
+      // editor; that is the moment at which focus is about to move away.
+      // Scope to terminal / sidebar / ribbon / leaf headers to avoid
+      // snapshotting on every click inside the editor itself.
+      this._captureSelection();
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    this.domSelectionListeners.push(() =>
+      document.removeEventListener("pointerdown", onPointerDown, true)
+    );
+
+    // Capture selection after mouse drag-select completes.
+    const onPointerUp = (evt) => {
+      const t = evt.target;
+      if (!t || !(t instanceof Element)) return;
+      if (!t.closest(".cm-editor") && !t.closest(".CodeMirror")) return;
+      setTimeout(() => {
+        this._captureSelection();
+        this._scheduleBroadcast();
+      }, 0);
+    };
+    document.addEventListener("pointerup", onPointerUp, true);
+    this.domSelectionListeners.push(() =>
+      document.removeEventListener("pointerup", onPointerUp, true)
+    );
+
+    // Capture selection after keyboard selection (Shift+Arrow, Ctrl+A, etc.).
+    const onKeyUp = (evt) => {
+      const t = evt.target;
+      if (!t || !(t instanceof Element)) return;
+      if (!t.closest(".cm-editor") && !t.closest(".CodeMirror")) return;
+      if (!evt.shiftKey && !evt.metaKey && !evt.ctrlKey) return;
+      setTimeout(() => {
+        this._captureSelection();
+        this._scheduleBroadcast();
+      }, 0);
+    };
+    document.addEventListener("keyup", onKeyUp, true);
+    this.domSelectionListeners.push(() =>
+      document.removeEventListener("keyup", onKeyUp, true)
+    );
+
+    // Invalidate cache when the active file changes.
+    const onLeafChange = () => {
+      const view = this.app.workspace.getActiveViewOfType(import_obsidian.MarkdownView);
+      const currentPath = view?.file?.path;
+      if (this.lastSelection && this.lastSelection.filePath &&
+          !this.lastSelection.filePath.endsWith(currentPath || "")) {
+        this.lastSelection = null;
+        // Stale marker from a different file; wipe it everywhere so it
+        // doesn't reappear when the user toggles back.
+        this._clearAllGutterMarkers();
+      }
+      // Re-capture the selection in the newly-active editor, if any, so
+      // getLatestSelection reflects the current view without requiring a
+      // pointer or key event first.
+      this._captureSelection();
+    };
+    const leafRef = this.app.workspace.on("active-leaf-change", onLeafChange);
+    this.domSelectionListeners.push(() => this.app.workspace.offref(leafRef));
+  }
+
+  _scheduleBroadcast() {
+    if (this.selectionDebounceTimer) clearTimeout(this.selectionDebounceTimer);
+    this.selectionDebounceTimer = setTimeout(() => {
+      this.selectionDebounceTimer = null;
+      this._broadcastSelectionChanged();
+    }, 300);
+  }
+
+  _broadcastSelectionChanged() {
+    if (this.clients.size === 0) return;
+    const payload = this._buildSelectionPayload();
+    const msg = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "selection_changed",
+      params: payload
+    });
+    for (const client of this.clients) {
+      try {
+        if (this.useWsLibrary) {
+          // ws.WebSocket; readyState 1 === OPEN
+          if (client.readyState === 1) client.send(msg);
+        } else {
+          client.send(msg);
+        }
+      } catch (_) {}
+    }
+  }
+
+  stop() {
+    // Clear debounce timer.
+    if (this.selectionDebounceTimer) {
+      clearTimeout(this.selectionDebounceTimer);
+      this.selectionDebounceTimer = null;
+    }
+    // Unregister Obsidian event handlers.
+    for (const ref of this.eventRefs) {
+      try { this.app.workspace.offref(ref); } catch (_) {}
+    }
+    this.eventRefs = [];
+    // Close all client connections.
+    for (const client of this.clients) {
+      try {
+        client.close();
+      } catch (_) {}
+    }
+    this.clients.clear();
+    // Close the WebSocket server.
+    try {
+      if (this.useWsLibrary && this.server) this.server.close();
+    } catch (_) {}
+    // Close the http server.
+    try {
+      if (this.httpServer) this.httpServer.close();
+    } catch (_) {}
+    this.server = null;
+    this.httpServer = null;
+    // Delete lock file; always attempt, even if other cleanup throws.
+    if (this.lockFilePath) {
+      try { require("fs").unlinkSync(this.lockFilePath); } catch (_) {}
+      this.lockFilePath = null;
+    }
+    this.domSelectionListeners.forEach((fn) => fn());
+    this.domSelectionListeners = [];
+    // Clear gutter markers before teardown.
+    // Note: registerEditorExtension has no unregister; extension lives for plugin lifetime.
+    this._clearAllGutterMarkers();
+    this.lastSelection = null;
+  }
+};
+
 var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -7653,6 +8464,10 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         drop.onChange(async (value) => {
           this.plugin.pluginData.cliBackend = value;
           await this.plugin.saveData(this.plugin.pluginData);
+          // Backend changed; start or stop the IDE MCP server accordingly so
+          // the user does not need to reload the plugin for the gate to take
+          // effect.
+          this.plugin._syncIdeMcpServer();
         });
       });
     new import_obsidian.Setting(containerEl)
@@ -7897,6 +8712,33 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       })
     );
     this.addSettingTab(new ClaudeSidebarSettingsTab(this.app, this));
+
+    // Start the IDE MCP server so `claude --ide` auto-connects via the lock
+    // file in ~/.claude/ide/. Only relevant when the active backend is Claude;
+    // other CLIs use different (or no) IDE companion protocols. Failures here
+    // must not prevent the plugin from loading; the terminal still works
+    // without IDE integration.
+    this._syncIdeMcpServer();
+  }
+  _syncIdeMcpServer() {
+    const shouldRun = isClaudeBackend(this.pluginData);
+    if (shouldRun && !this.ideMcpServer) {
+      try {
+        this.ideMcpServer = new ObsidianIdeMcpServer(this.app, this);
+        this.ideMcpServer.start(this.getVaultPath());
+      } catch (e) {
+        console.error("[claude-sidebar] Failed to start IDE MCP server:", e);
+        this.ideMcpServer = null;
+      }
+    } else if (!shouldRun && this.ideMcpServer) {
+      try {
+        this.ideMcpServer.stop();
+      } catch (e) {
+        console.error("[claude-sidebar] IDE MCP server stop failed:", e);
+      } finally {
+        this.ideMcpServer = null;
+      }
+    }
   }
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
@@ -7925,6 +8767,16 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
   }
   onunload() {
+    // Stop the IDE MCP server first so the lock file is removed and the
+    // WebSocket server is closed before we tear down terminals. Wrapped in
+    // try/finally so a failure here never blocks child-process cleanup.
+    try {
+      if (this.ideMcpServer) this.ideMcpServer.stop();
+    } catch (e) {
+      console.error("[claude-sidebar] IDE MCP server stop failed:", e);
+    } finally {
+      this.ideMcpServer = null;
+    }
     // Kill all terminal processes before unloading to prevent orphans
     const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE);
     for (const leaf of leaves) {

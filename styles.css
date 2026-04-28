@@ -53,3 +53,24 @@
 	/* Prevent textarea from affecting layout while keeping it positioned correctly */
 	pointer-events: none;
 }
+
+/* Persistent selection marker rendered in the line-number gutter for
+   every line in the captured Claude context range. Driven by our own CM6
+   StateField (see selectionGutterExtension in main.js) so the bar stays
+   visible after the editor blurs, VS Code style. */
+.cm-gutterElement .claude-selection-gutter-marker {
+	width: 3px;
+	height: 100%;
+	margin-left: auto;
+	background-color: var(--color-accent, #7c6af7);
+	border-radius: 1px;
+}
+
+/* The gutter container itself: zero-width track flush against the
+   line-number gutter. The marker div above provides all the visible
+   width, so the gutter consumes no extra horizontal space when no
+   selection is active. */
+.cm-gutter.claude-selection-gutter {
+	width: 3px;
+	min-width: 3px;
+}
