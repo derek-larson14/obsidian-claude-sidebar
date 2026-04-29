@@ -6747,6 +6747,14 @@ var CLI_BACKENDS = {
     resumeFlag: "--continue",
     resumeIsSubcommand: false,
   },
+  copilot: {
+    label: "GitHub Copilot CLI",
+    binary: "copilot",
+    pathHints: ["/opt/homebrew/bin"],
+    yoloFlag: "--allow-all",
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
 };
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
