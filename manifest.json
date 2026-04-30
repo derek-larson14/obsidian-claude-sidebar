@@ -1,7 +1,7 @@
 {
 	"id": "claude-sidebar",
 	"name": "Claude Sidebar",
-	"version": "1.7.22",
+	"version": "1.8.0",
 	"minAppVersion": "1.0.0",
 	"description": "Run Claude Code in your sidebar.",
 	"author": "Derek Larson",

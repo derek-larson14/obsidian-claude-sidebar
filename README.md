@@ -13,7 +13,7 @@ Built by [Derek Larson](https://dtlarson.com) - [Pair with commands →](https:/
 - **Embedded Claude** - Full terminal with Claude in your Obsidian sidebar
 - **Folder context menu** - Right-click any folder to open Claude in that directory
 - **YOLO mode** - Launch Claude with `--dangerously-skip-permissions` via right-click menus
-- **Multi-backend** - Switch between Claude Code, Codex, OpenCode, Gemini CLI, Kimi Code, and GitHub Copilot CLI in settings
+- **Multi-backend** - Switch between Claude Code, Codex, OpenCode, Gemini CLI, Kimi Code, GitHub Copilot CLI, and Pi in settings, or via the **Switch CLI provider…** command palette quick switcher
 
 ## Requirements
 

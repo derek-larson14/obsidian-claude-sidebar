@@ -6755,6 +6755,14 @@ var CLI_BACKENDS = {
     resumeFlag: "--continue",
     resumeIsSubcommand: false,
   },
+  pi: {
+    label: "Pi",
+    binary: "pi",
+    pathHints: [],
+    yoloFlag: null,
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
 };
 var TerminalView = class extends import_obsidian.ItemView {
   constructor(leaf, plugin) {
@@ -7445,9 +7453,11 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
     const backend = this.getBackend();
+    const backendKey = this.plugin.pluginData.cliBackend || "claude";
     let cliCmd = backend.binary;
     if (yoloMode && backend.yoloFlag) cliCmd += " " + backend.yoloFlag;
-    const additionalFlags = this.plugin.pluginData.additionalFlags;
+    const flagsByProvider = this.plugin.pluginData.flagsByProvider || {};
+    const additionalFlags = flagsByProvider[backendKey] || null;
     if (additionalFlags) cliCmd += " " + additionalFlags;
     let baseCmd = cliCmd;
     if (continueSession && backend.resumeFlag) {
@@ -7642,6 +7652,29 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.fitAddon = null;
   }
 };
+var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.setPlaceholder("Switch CLI provider…");
+  }
+  getSuggestions(query) {
+    const q = query.toLowerCase();
+    const currentKey = this.plugin.pluginData.cliBackend || "claude";
+    return Object.entries(CLI_BACKENDS)
+      .map(([key, backend]) => ({ key, backend, isCurrent: key === currentKey }))
+      .filter(({ backend }) => backend.label.toLowerCase().includes(q) || backend.binary.toLowerCase().includes(q));
+  }
+  renderSuggestion(item, el) {
+    el.createEl("div", { text: item.backend.label + (item.isCurrent ? "  (current)" : "") });
+    el.createEl("small", { text: item.backend.binary, cls: "vault-terminal-suggest-binary" });
+  }
+  async onChooseSuggestion(item) {
+    this.plugin.pluginData.cliBackend = item.key;
+    await this.plugin.saveData(this.plugin.pluginData);
+    this.plugin.createNewTab();
+  }
+};
 var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -7650,6 +7683,8 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    const currentBackendKey = this.plugin.pluginData.cliBackend || "claude";
+    const currentBackend = CLI_BACKENDS[currentBackendKey] || CLI_BACKENDS.claude;
     new import_obsidian.Setting(containerEl)
       .setName("CLI backend")
       .setDesc("Which coding agent CLI to run in the sidebar.")
@@ -7657,10 +7692,11 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         for (const [key, backend] of Object.entries(CLI_BACKENDS)) {
           drop.addOption(key, backend.label);
         }
-        drop.setValue(this.plugin.pluginData.cliBackend || "claude");
+        drop.setValue(currentBackendKey);
         drop.onChange(async (value) => {
           this.plugin.pluginData.cliBackend = value;
           await this.plugin.saveData(this.plugin.pluginData);
+          this.display();
         });
       });
     new import_obsidian.Setting(containerEl)
@@ -7673,14 +7709,23 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
           this.plugin.pluginData.defaultWorkingDir = value.trim() || null;
           await this.plugin.saveData(this.plugin.pluginData);
         }));
+    if (!this.plugin.pluginData.flagsByProvider) {
+      this.plugin.pluginData.flagsByProvider = {};
+    }
+    const flagsByProvider = this.plugin.pluginData.flagsByProvider;
     new import_obsidian.Setting(containerEl)
-      .setName("CLI flags")
-      .setDesc("Flags appended to every CLI session.")
+      .setName(`CLI flags (${currentBackend.label})`)
+      .setDesc("Flags appended to every session for this provider only. Switch the dropdown above to edit flags for another provider.")
       .addText(text => text
         .setPlaceholder("--model claude-opus-4-6")
-        .setValue(this.plugin.pluginData.additionalFlags || "")
+        .setValue(flagsByProvider[currentBackendKey] || "")
         .onChange(async (value) => {
-          this.plugin.pluginData.additionalFlags = value.trim() || null;
+          const trimmed = value.trim();
+          if (trimmed) {
+            flagsByProvider[currentBackendKey] = trimmed;
+          } else {
+            delete flagsByProvider[currentBackendKey];
+          }
           await this.plugin.saveData(this.plugin.pluginData);
         }));
   }
@@ -7694,6 +7739,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     this.pluginData = await this.loadData() || {};
+    if (this.pluginData.additionalFlags && !this.pluginData.flagsByProvider) {
+      const key = this.pluginData.cliBackend || "claude";
+      this.pluginData.flagsByProvider = { [key]: this.pluginData.additionalFlags };
+      delete this.pluginData.additionalFlags;
+      await this.saveData(this.pluginData);
+    }
     this.lastActiveTerminalLeaf = null;
     this.layoutReady = false;
     this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
@@ -7765,6 +7816,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       id: "open-claude",
       name: "Open Claude Code",
       callback: () => this.activateView()
+    });
+    this.addCommand({
+      id: "switch-cli-provider",
+      name: "Switch CLI provider…",
+      callback: () => new CliProviderSwitchModal(this.app, this).open()
     });
     this.addCommand({
       id: "new-claude-tab",
