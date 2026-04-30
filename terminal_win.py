@@ -59,7 +59,11 @@ def main():
     try:
         from winpty import PTY
     except ImportError:
-        print("pywinpty not installed. Run: pip install pywinpty", file=sys.stderr)
+        print(f"pywinpty not installed for this Python interpreter:", file=sys.stderr)
+        print(f"  {sys.executable}", file=sys.stderr)
+        print(f"", file=sys.stderr)
+        print(f"Install it into THIS interpreter (not just any python on PATH):", file=sys.stderr)
+        print(f'  "{sys.executable}" -m pip install pywinpty', file=sys.stderr)
         sys.exit(1)
 
     # Set stdin to binary mode on Windows

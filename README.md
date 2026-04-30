@@ -103,10 +103,12 @@ Want to use it on iOS or Android? See [Claude Anywhere](https://github.com/derek
 Windows requires additional dependencies:
 
 1. Install Python 3 from [python.org](https://python.org)
-2. Install pywinpty:
+2. Install pywinpty into the Python the plugin will use:
 ```bash
-pip install pywinpty
+py -m pip install pywinpty
 ```
+
+Use `py -m pip` (not just `pip`) to avoid installing into a different Python interpreter than the one the plugin selects. If you see "pywinpty not installed" in the sidebar after installing, the error message will print the exact interpreter path — install pywinpty into that one.
 
 3. Install the plugin (run from your vault folder in PowerShell):
 ```powershell
