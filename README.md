@@ -119,6 +119,15 @@ $u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip";
 
 4. Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude Sidebar"
 
+5. On Windows, pick whether to run Claude inside WSL or natively in `cmd.exe`. Configure in **Settings → Claude Sidebar → Shell** (Windows only — Linux/macOS always run `bash`):
+
+| Option | Spawns | Path translation |
+|--------|--------|------------------|
+| wsl.exe (WSL, default) | `wsl.exe` | Windows paths → Linux paths via `wslpath` |
+| cmd.exe | `cmd.exe` | none |
+
+Use `wsl.exe` when your Claude install, Node, or git toolchain lives in a WSL distro. Vault paths sent to Claude (file path command, selection context, drag-drop, image paste, wikilink references) are converted to Linux form before reaching the CLI. Translation respects a custom `/etc/wsl.conf` `[automount]` root, so paths still resolve if your `C:\` mounts at `/c/` instead of `/mnt/c/`.
+
 ## How It Works
 
 - [xterm.js](https://xtermjs.org/) for terminal emulation
