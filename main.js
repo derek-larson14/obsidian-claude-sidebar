@@ -7927,10 +7927,9 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       }
     });
 
-    // Register folder context menu
+    // Register file/folder context menu
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file, source) => {
-        // Only show for folders, not files
         if (file instanceof import_obsidian.TFolder) {
           menu.addItem(item =>
             item
@@ -7953,6 +7952,16 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
                 })
             );
           }
+        } else if (file instanceof import_obsidian.TFile) {
+          menu.addItem(item =>
+            item
+              .setTitle('Send file path to Claude')
+              .setIcon('bot')
+              .onClick(() => {
+                const absolutePath = `"${this.getPath(this.getVaultPath() + '/' + file.path)}" `;
+                this.sendTextToTerminal(absolutePath);
+              })
+          );
         }
       })
     );
