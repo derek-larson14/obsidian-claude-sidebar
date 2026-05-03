@@ -123,8 +123,8 @@ $u="https://github.com/derek-larson14/obsidian-claude-sidebar/archive/main.zip";
 
 | Option | Spawns | Path translation |
 |--------|--------|------------------|
-| wsl.exe (WSL, default) | `wsl.exe` | Windows paths → Linux paths via `wslpath` |
-| cmd.exe | `cmd.exe` | none |
+| cmd.exe (default) | `cmd.exe` | none |
+| wsl.exe (WSL) | `wsl.exe` | Windows paths → Linux paths via `wslpath` |
 
 Use `wsl.exe` when your Claude install, Node, or git toolchain lives in a WSL distro. Vault paths sent to Claude (file path command, selection context, drag-drop, image paste, wikilink references) are converted to Linux form before reaching the CLI. Translation respects a custom `/etc/wsl.conf` `[automount]` root, so paths still resolve if your `C:\` mounts at `/c/` instead of `/mnt/c/`.
 

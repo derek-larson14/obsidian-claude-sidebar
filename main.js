@@ -7702,9 +7702,9 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         .setName("Shell")
         .setDesc("wsl.exe runs Claude inside WSL and translates vault paths to Linux paths via wslpath. cmd.exe runs Claude on Windows natively.")
         .addDropdown(drop => {
-          drop.addOption("wsl", "wsl.exe (WSL)");
           drop.addOption("cmd", "cmd.exe");
-          drop.setValue(this.plugin.pluginData.shell === "cmd" ? "cmd" : "wsl");
+          drop.addOption("wsl", "wsl.exe (WSL)");
+          drop.setValue(this.plugin.pluginData.shell === "wsl" ? "wsl" : "cmd");
           drop.onChange(async (value) => {
             this.plugin.pluginData.shell = value;
             this.plugin.invalidateShell();
@@ -8030,7 +8030,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       this._shell = { kind: "bash", binary: process.env.SHELL || "/bin/bash" };
       return this._shell;
     }
-    const kind = this.pluginData.shell === "cmd" ? "cmd" : "wsl";
+    const kind = this.pluginData.shell === "wsl" ? "wsl" : "cmd";
     const binary = kind === "cmd" ? (process.env.COMSPEC || "cmd.exe") : "wsl.exe";
     this._shell = { kind, binary };
     return this._shell;
