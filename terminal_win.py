@@ -5,12 +5,18 @@ import re
 import threading
 import os
 import msvcrt
-import select
+import time
 
 # Pre-compile regex patterns for performance
 RESIZE_RE = re.compile(rb'\x1b\]RESIZE;[0-9]+;[0-9]+\x07', re.IGNORECASE)
 FOCUS_IN_RE = re.compile(rb'\x1b\[I')
 FOCUS_OUT_RE = re.compile(rb'\x1b\[O')
+
+# pywinpty.PTY.read() is non-blocking on Windows and returns immediately when
+# no data is available. Without a backoff the output reader thread spins at
+# 100% CPU on one core whenever the terminal is idle. 10 ms keeps interactive
+# latency imperceptible while dropping idle CPU to near zero.
+IDLE_SLEEP_S = 0.01
 
 def read_utf8_char(buffer):
     """Read a complete UTF-8 character from buffer, handling multi-byte sequences."""
@@ -81,18 +87,22 @@ def main():
             while running and pty.isalive():
                 try:
                     data = pty.read()
-                    if data:
-                        # pywinpty returns strings
-                        output = data.encode('utf-8') if isinstance(data, str) else data
-                        # Filter out escape sequences that get echoed back
-                        output = RESIZE_RE.sub(b'', output)
-                        output = FOCUS_IN_RE.sub(b'', output)
-                        output = FOCUS_OUT_RE.sub(b'', output)
-                        if output:
-                            sys.stdout.buffer.write(output)
-                            sys.stdout.buffer.flush()
+                    if not data:
+                        time.sleep(IDLE_SLEEP_S)
+                        continue
+                    # pywinpty returns strings
+                    output = data.encode('utf-8') if isinstance(data, str) else data
+                    # Filter out escape sequences that get echoed back
+                    output = RESIZE_RE.sub(b'', output)
+                    output = FOCUS_IN_RE.sub(b'', output)
+                    output = FOCUS_OUT_RE.sub(b'', output)
+                    if output:
+                        sys.stdout.buffer.write(output)
+                        sys.stdout.buffer.flush()
                 except Exception:
-                    pass
+                    # Avoid a tight failure loop if something is persistently
+                    # wrong; pty.isalive() will normally drop us out shortly.
+                    time.sleep(IDLE_SLEEP_S)
             running = False
 
         output_thread = threading.Thread(target=read_output, daemon=True)
