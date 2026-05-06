@@ -7759,8 +7759,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       await this.saveData(this.pluginData);
     }
     this.lastActiveTerminalLeaf = null;
+    this.notebookNavigatorFolderMenuDispose = null;
     this.layoutReady = false;
-    this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
+    this.app.workspace.onLayoutReady(() => {
+      this.layoutReady = true;
+      this.registerNotebookNavigatorMenus();
+    });
 
     // Track the most recently focused Claude tab
     this.registerEvent(
@@ -7931,27 +7935,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file, source) => {
         if (file instanceof import_obsidian.TFolder) {
-          menu.addItem(item =>
-            item
-              .setTitle('Open Claude here')
-              .setIcon('bot')
-              .onClick(() => {
-                const absolutePath = this.app.vault.adapter.getFullPath(file.path);
-                this.createNewTab(absolutePath);
-              })
-          );
-          const folderBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
-          if (folderBackend.yoloFlag) {
-            menu.addItem(item =>
-              item
-                .setTitle('Open Claude here (YOLO)')
-                .setIcon('zap')
-                .onClick(() => {
-                  const absolutePath = this.app.vault.adapter.getFullPath(file.path);
-                  this.createNewTab(absolutePath, true);
-                })
-            );
-          }
+          this.addClaudeFolderMenuItems(menu.addItem.bind(menu), file);
         } else if (file instanceof import_obsidian.TFile) {
           menu.addItem(item =>
             item
@@ -7965,6 +7949,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         }
       })
     );
+    this.registerNotebookNavigatorMenus();
     // Register editor context menu (right-click on selected text)
     this.registerEvent(
       this.app.workspace.on('editor-menu', (menu, editor, view) => {
@@ -8008,6 +7993,45 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
           view.term.focus();
         }
       }
+    }
+  }
+  addClaudeFolderMenuItems(addItem, folder) {
+    addItem(item =>
+      item
+        .setTitle('Open Claude here')
+        .setIcon('bot')
+        .onClick(() => {
+          const absolutePath = this.app.vault.adapter.getFullPath(folder.path);
+          this.createNewTab(absolutePath);
+        })
+    );
+    const folderBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+    if (folderBackend.yoloFlag) {
+      addItem(item =>
+        item
+          .setTitle('Open Claude here (YOLO)')
+          .setIcon('zap')
+          .onClick(() => {
+            const absolutePath = this.app.vault.adapter.getFullPath(folder.path);
+            this.createNewTab(absolutePath, true);
+          })
+      );
+    }
+  }
+  registerNotebookNavigatorMenus() {
+    if (this.notebookNavigatorFolderMenuDispose) return;
+    const notebookNavigator = this.app.plugins?.plugins?.["notebook-navigator"]?.api;
+    const registerFolderMenu = notebookNavigator?.menus?.registerFolderMenu;
+    if (typeof registerFolderMenu !== "function") return;
+    const dispose = registerFolderMenu.call(notebookNavigator.menus, ({ addItem, folder }) => {
+      this.addClaudeFolderMenuItems(addItem, folder);
+    });
+    if (typeof dispose === "function") {
+      this.notebookNavigatorFolderMenuDispose = dispose;
+      this.register(() => {
+        dispose();
+        this.notebookNavigatorFolderMenuDispose = null;
+      });
     }
   }
   onunload() {
