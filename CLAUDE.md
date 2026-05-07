@@ -6,9 +6,7 @@ Repo: https://github.com/derek-larson14/obsidian-claude-sidebar
 
 ## What this plugin does
 
-Make coding agents feel native in Obsidian. Merging what Obsidian is good at (the file tree, the editor, the ribbon, the command palette, managing plugins, visual layer) while leaning on vanilla CLI agents to handle the rest. 
-
-The plugin runs the terminal that hosts the agent and routes Obsidian actions to it. It does not own anything else. The agent CLI (Claude Code, Codex, OpenCode, Gemini, Kimi Code, GitHub Copilot, Pi) handles auth, models, billing, and its own UI. The plugin is the connector.
+Make agents feel native in Obsidian. The plugin runs the terminal that hosts the agent and routes Obsidian actions to it. It does not own anything else. The agent CLI (Claude Code, Codex, OpenCode, Gemini, Kimi Code, GitHub Copilot, Pi) handles auth, models, billing, and its own UI.
 
 ## Two things you can help the user do
 
