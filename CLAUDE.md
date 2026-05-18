@@ -158,3 +158,7 @@ Mobile is a separate plugin: https://github.com/derek-larson14/claude-anywhere.
 ## After you submit
 
 Once a PR is in, the maintainer will take a look, leave comments, and merge or push back. Iteration is normal - if a fix lands but doesn't fully resolve the bug, just say so and keep going. After merge, the maintainer tags a release; BRAT users update once the tag is up.
+
+## Maintainer notes — releases
+
+Release tag must match `manifest.json` version exactly with no `v` prefix (e.g. `1.8.3`, not `v1.8.3`). Obsidian's community plugin scanner rejects mismatched tags. Release assets must include `main.js`, `manifest.json`, and `styles.css`.
