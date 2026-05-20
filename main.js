@@ -6755,6 +6755,14 @@ var CLI_BACKENDS = {
     resumeFlag: "--continue",
     resumeIsSubcommand: false,
   },
+  cursor: {
+    label: "Cursor Agent",
+    binary: "cursor-agent",
+    pathHints: ["~/.local/bin"],
+    yoloFlag: "--yolo",
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
   pi: {
     label: "Pi",
     binary: "pi",
