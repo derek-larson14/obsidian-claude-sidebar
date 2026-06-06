@@ -7302,6 +7302,52 @@ var TerminalView = class extends import_obsidian.ItemView {
         }).catch(() => {});
       });
     }
+    const isMac = process.platform === 'darwin';
+    // Keys the terminal must keep regardless of Obsidian bindings.
+    const terminalNeedsKey = (ev) => {
+      // Control codes are terminal input (Ctrl+C interrupt, Ctrl+A, etc.),
+      // unless Cmd is also held (then it's an app shortcut, not a control code).
+      if (ev.ctrlKey && !ev.metaKey) return true;
+      // Plain typing / navigation with no app modifier.
+      if (!ev.metaKey && !ev.ctrlKey && !ev.altKey) {
+        const nav = new Set(['Enter', 'Tab', 'Backspace', 'Delete', 'Escape',
+          'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
+          'Home', 'End', 'PageUp', 'PageDown', ' ']);
+        if (nav.has(ev.key)) return true;
+        if (ev.key && ev.key.length === 1) return true; // printable character
+      }
+      return false;
+    };
+    // True if the event matches a hotkey the user/Obsidian has registered.
+    // Uses Obsidian's internal hotkeyManager (undocumented API — defensive).
+    const matchesObsidianHotkey = (ev) => {
+      const hm = this.app && this.app.hotkeyManager;
+      if (!hm) return false;
+      let baked = hm.bakedHotkeys;
+      if (!baked && typeof hm.bake === 'function') { hm.bake(); baked = hm.bakedHotkeys; }
+      if (!Array.isArray(baked)) return false;
+      const evKey = (ev.key || '').toLowerCase();
+      for (const hk of baked) {
+        if (!hk || !hk.key) continue;
+        if (hk.key.toLowerCase() !== evKey) continue;
+        let mods = hk.modifiers;
+        if (typeof mods === 'string') mods = mods ? mods.split(',') : [];
+        if (!Array.isArray(mods)) mods = [];
+        let needMeta = false, needCtrl = false, needShift = false, needAlt = false;
+        for (const m of mods) {
+          if (m === 'Mod') { if (isMac) needMeta = true; else needCtrl = true; }
+          else if (m === 'Meta') needMeta = true;
+          else if (m === 'Ctrl') needCtrl = true;
+          else if (m === 'Shift') needShift = true;
+          else if (m === 'Alt') needAlt = true;
+        }
+        if (needMeta === !!ev.metaKey && needCtrl === !!ev.ctrlKey &&
+            needShift === !!ev.shiftKey && needAlt === !!ev.altKey) {
+          return true;
+        }
+      }
+      return false;
+    };
     this.term.attachCustomKeyEventHandler((ev) => {
       // Shift+Enter: send Alt+Enter for multi-line input
       // Must block both keydown and keypress events to prevent xterm from sending normal Enter
@@ -7354,6 +7400,13 @@ var TerminalView = class extends import_obsidian.ItemView {
             this.proc?.stdin?.write('\x01'); // Ctrl+A = start of line
             return false;
           }
+        }
+        // Pass app-level shortcuts to Obsidian instead of letting xterm swallow
+        // them: any key Obsidian has registered as a hotkey (covers custom
+        // bindings and every command hotkey), unless the terminal genuinely
+        // needs that key (control codes, typing, navigation).
+        if (!terminalNeedsKey(ev) && matchesObsidianHotkey(ev)) {
+          return false;
         }
       }
       return true;
