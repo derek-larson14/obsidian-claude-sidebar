@@ -7486,6 +7486,35 @@ var TerminalView = class extends import_obsidian.ItemView {
           }
           return true;
         }
+        // Ctrl+Shift+C / Ctrl+Shift+V: standard Linux terminal copy/paste (GNOME Terminal,
+        // KDE Konsole, most VTE terminals). Plain Ctrl+C/Ctrl+V stay reserved for control
+        // codes (Ctrl+C = SIGINT), so Linux adds Shift to disambiguate. Additive and harmless
+        // elsewhere: macOS uses Cmd+C/V and Windows Ctrl+C/V, both handled below. Uses the
+        // Electron clipboard like the right-click menu and the #89 Ctrl+C fix (the async
+        // Clipboard API can reject silently in the renderer). ev.code so the Shift-uppercased
+        // key letter is irrelevant.
+        if (ev.code === 'KeyC' && ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          const selection = this.term.getSelection();
+          if (selection) {
+            try { require("electron").clipboard.writeText(selection); }
+            catch (_) { navigator.clipboard?.writeText(selection).catch(() => {}); }
+          }
+          return false;
+        }
+        if (ev.code === 'KeyV' && ev.ctrlKey && ev.shiftKey && !ev.altKey && !ev.metaKey) {
+          ev.preventDefault();
+          ev.stopPropagation();
+          let text = "";
+          try { text = require("electron").clipboard.readText() || ""; } catch (_) {}
+          if (text) {
+            this.term.paste(text);
+          } else {
+            navigator.clipboard?.readText?.().then((t) => { if (t) this.term.paste(t); }).catch(() => {});
+          }
+          return false;
+        }
         // Windows Ctrl+V: paste from clipboard (Obsidian intercepts this before xterm sees it)
         if (ev.key === 'v' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
           ev.preventDefault();
