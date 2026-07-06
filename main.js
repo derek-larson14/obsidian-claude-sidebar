@@ -7464,6 +7464,15 @@ var TerminalView = class extends import_obsidian.ItemView {
       return false;
     };
     this.term.attachCustomKeyEventHandler((ev) => {
+      // macOS only: let the Fn key (Fn-Fn dictation trigger) and F5 (dedicated Dictation
+      // key on newer keyboards) pass through untouched instead of being sent to the terminal.
+      if (process.platform === 'darwin' && (ev.key === 'Fn' || ev.key === 'F5')) {
+        return false;
+      }
+      // Defer to native IME/dictation composition handling instead of xterm's.
+      if (ev.isComposing) {
+        return false;
+      }
       // Shift+Enter: send Alt+Enter for multi-line input
       // Must block both keydown and keypress events to prevent xterm from sending normal Enter
       if (ev.key === 'Enter' && ev.shiftKey) {
