@@ -6840,6 +6840,24 @@ var TerminalView = class extends import_obsidian.ItemView {
     return state;
   }
   async onOpen() {
+    // Workspace-restore on startup: the sidebar layout isn't settled yet, and
+    // building xterm now trips Obsidian's `recomputeChildrenDimensions` error in
+    // updateLayout, which tears the view back down (close -> unload throws
+    // "reading 'e'") and can abort app load on Linux. Defer the real init until
+    // onLayoutReady so a persisted terminal reopens on startup without crashing.
+    if (!this.plugin.layoutReady && !this._deferredOpen) {
+      this._deferredOpen = true;
+      this.app.workspace.onLayoutReady(() => {
+        setTimeout(() => {
+          try {
+            this.onOpen();
+          } catch (err) {
+            console.error("[Claude Sidebar] Deferred terminal init failed:", err);
+          }
+        }, 50);
+      });
+      return;
+    }
     try {
       // If terminal is still alive from a prior onOpen, just reattach and focus.
       // Obsidian calls onOpen() each time the view becomes visible; without this
