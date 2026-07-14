@@ -3,3 +3,4 @@ node_modules/
 *.log
 .claude/
 .vs
+CLAUDE.local.md
