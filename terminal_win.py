@@ -3,6 +3,7 @@
 import sys
 import re
 import threading
+import queue
 import os
 import msvcrt
 import time
@@ -17,6 +18,49 @@ FOCUS_OUT_RE = re.compile(rb'\x1b\[O')
 # 100% CPU on one core whenever the terminal is idle. 10 ms keeps interactive
 # latency imperceptible while dropping idle CPU to near zero.
 IDLE_SLEEP_S = 0.01
+
+# How long to wait for the second byte of an escape sequence before deciding
+# the ESC stands alone. A real escape arrives from xterm.js as a single write,
+# so the follow-up byte is already in the pipe and lands in well under a
+# millisecond. A human pressing Esc to interrupt sends nothing after it, and
+# without this timeout that keystroke sits in the lookahead until the next key
+# is pressed. 50 ms is far above the pipe latency and far below any plausible
+# gap between two deliberate keystrokes.
+ESC_LOOKAHEAD_S = 0.05
+
+# stdin is read on a dedicated thread so the input loop can wait on a byte with
+# a timeout. sys.stdin.buffer.read(1) has no timed variant, and msvcrt.kbhit()
+# is no help here: stdin is a pipe from the plugin, not a console handle.
+_stdin_queue = queue.Queue()
+
+def _stdin_reader():
+    """Feed stdin bytes into _stdin_queue, then a None sentinel at EOF."""
+    while True:
+        try:
+            b = sys.stdin.buffer.read(1)
+        except Exception:
+            b = b''
+        if not b:
+            _stdin_queue.put(None)
+            return
+        _stdin_queue.put(b)
+
+def read_stdin_byte(timeout=None):
+    """Next stdin byte; b'' at EOF; None if timeout elapses first.
+
+    Callers that must not give up pass timeout=None and block indefinitely.
+    Note both EOF and timeout are falsy, so existing `if not c: break` checks
+    treat a timeout as end-of-input, which is the behavior we want mid-sequence.
+    """
+    try:
+        b = _stdin_queue.get(timeout=timeout)
+    except queue.Empty:
+        return None
+    if b is None:
+        # EOF is sticky — put the sentinel back for any later reader.
+        _stdin_queue.put(None)
+        return b''
+    return b
 
 def read_utf8_char(buffer):
     """Read a complete UTF-8 character from buffer, handling multi-byte sequences."""
@@ -108,12 +152,15 @@ def main():
         output_thread = threading.Thread(target=read_output, daemon=True)
         output_thread.start()
 
+        stdin_thread = threading.Thread(target=_stdin_reader, daemon=True)
+        stdin_thread.start()
+
         input_buffer = b''
-        
+
         while running and pty.isalive():
             try:
                 # Read available data from stdin
-                data = sys.stdin.buffer.read(1)
+                data = read_stdin_byte()
                 if not data:
                     break
                 
@@ -125,15 +172,18 @@ def main():
                 # leading \x1b of a subsequent escape that happens to fall
                 # within the lookahead window.
                 if input_buffer.startswith(b'\x1b'):
-                    # Need at least 2 bytes to identify the escape type
+                    # Need at least 2 bytes to identify the escape type. The
+                    # timeout is what makes a lone Esc usable: without it this
+                    # blocks until the user's next keystroke, so Esc-to-interrupt
+                    # appears to do nothing until they type something else.
                     while len(input_buffer) < 2:
-                        more = sys.stdin.buffer.read(1)
+                        more = read_stdin_byte(timeout=ESC_LOOKAHEAD_S)
                         if not more:
                             break
                         input_buffer += more
 
                     if len(input_buffer) < 2:
-                        # Bare ESC at EOF — pass through
+                        # Lone ESC (user keypress) or bare ESC at EOF — pass through
                         pty.write(input_buffer.decode('latin-1'))
                         input_buffer = b''
                         continue
@@ -146,7 +196,7 @@ def main():
                         # (OSC 11) come back ST-terminated, and waiting on a BEL
                         # that never arrives swallows all subsequent input.
                         while b'\x07' not in input_buffer and b'\x1b\\' not in input_buffer:
-                            c = sys.stdin.buffer.read(1)
+                            c = read_stdin_byte()
                             if not c:
                                 break
                             input_buffer += c
@@ -174,7 +224,7 @@ def main():
                     elif second == b'[':
                         # CSI sequence (\x1b[...final) — read until final byte (0x40–0x7E)
                         while True:
-                            c = sys.stdin.buffer.read(1)
+                            c = read_stdin_byte()
                             if not c:
                                 break
                             input_buffer += c
