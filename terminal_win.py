@@ -141,8 +141,11 @@ def main():
                     second = input_buffer[1:2]
 
                     if second == b']':
-                        # OSC sequence (\x1b]...BEL) — read until BEL (\x07)
-                        while b'\x07' not in input_buffer:
+                        # OSC sequence (\x1b]...BEL or \x1b]...ST) — read until
+                        # either terminator. Terminal replies to color queries
+                        # (OSC 11) come back ST-terminated, and waiting on a BEL
+                        # that never arrives swallows all subsequent input.
+                        while b'\x07' not in input_buffer and b'\x1b\\' not in input_buffer:
                             c = sys.stdin.buffer.read(1)
                             if not c:
                                 break
