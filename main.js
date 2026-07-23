@@ -7585,10 +7585,43 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.ensureFitWithRetry();
     this.resizeObserver = new ResizeObserver(() => {
-      if (this._fitInProgress) return;
+      // Don't drop a resize that lands mid-fit — remember it so fit()'s release
+      // handler reprocesses it. Otherwise a maximize/restore whose single resize
+      // event coincides with an in-progress fit leaves the terminal at the old
+      // grid (stale/"squished" text — see #94).
+      if (this._fitInProgress) { this._pendingResize = true; return; }
       this.debouncedFit();
     });
     this.resizeObserver.observe(this.termHost);
+    // Keep the terminal fitted and rendering in popped-out windows (#94).
+    // Two Chromium behaviors bite a maximized popout that occludes the main window:
+    //   1) the occluded main window's timers/rAF are throttled, and the plugin's
+    //      code + xterm both schedule work there;
+    //   2) a ResizeObserver doesn't reliably deliver OS window-state changes.
+    // This loop runs on the TERMINAL'S OWN window (resolved every tick, so it
+    // follows the leaf across windows and is never throttled) and each tick:
+    //   - rebinds xterm's renderer to the current window via the CoreBrowserService
+    //     .window setter, so paints run on the active window instead of the
+    //     occluded main window (xterm otherwise stops repainting while you type);
+    //   - re-fits if the grid diverges from what the window can hold.
+    const reconcile = () => {
+      if (this._isDisposed) return;
+      const ownWin = this.termHost?.ownerDocument?.defaultView || window;
+      try {
+        const cbs = this.term?._core?._coreBrowserService;
+        if (cbs && cbs.window !== ownWin) cbs.window = ownWin;
+      } catch (e) {}
+      try {
+        if (this.term && this.fitAddon && !this._fitInProgress) {
+          const dim = this.fitAddon.proposeDimensions();
+          if (dim && dim.cols > 0 && dim.rows > 0 && (dim.cols !== this.term.cols || dim.rows !== this.term.rows)) {
+            this.debouncedFit();
+          }
+        }
+      } catch (e) {}
+      this._reconcileTimer = ownWin.setTimeout(reconcile, 400);
+    };
+    this._reconcileTimer = (this.termHost?.ownerDocument?.defaultView || window).setTimeout(reconcile, 400);
     // Track user scroll intent so auto-scroll doesn't fight the user
     this.userScrolledAt = 0;
     this.termHost.addEventListener("wheel", () => {
@@ -7648,14 +7681,26 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     } catch (e) {}
     // Release on the frame after next so any ResizeObserver callbacks
-    // caused by this fit() are swallowed instead of re-entering.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    // caused by this fit() are swallowed instead of re-entering. Use the
+    // terminal's OWN window: in a popout that occludes the main window, the main
+    // window's rAF is halted, which would strand this flag `true` and make the
+    // ResizeObserver ignore all later resizes (#94). The setTimeout is a safety net.
+    const relWin = this.termHost?.ownerDocument?.defaultView || window;
+    const release = () => {
+      if (this._fitInProgress === false) return;
       this._fitInProgress = false;
-    }));
+      // Reprocess a resize the ResizeObserver dropped while a fit was in progress.
+      if (this._pendingResize) { this._pendingResize = false; this.debouncedFit(); }
+    };
+    relWin.requestAnimationFrame(() => relWin.requestAnimationFrame(release));
+    relWin.setTimeout(release, 250);
   }
   debouncedFit() {
-    if (this.fitTimeout) clearTimeout(this.fitTimeout);
-    this.fitTimeout = setTimeout(() => {
+    // Schedule on the terminal's OWN window: main-window timers are throttled when
+    // a maximized popout occludes the main window, otherwise delaying the fit (#94).
+    const ownWin = this.termHost?.ownerDocument?.defaultView || window;
+    if (this.fitTimeout) { try { ownWin.clearTimeout(this.fitTimeout); } catch (e) {} clearTimeout(this.fitTimeout); }
+    this.fitTimeout = ownWin.setTimeout(() => {
       this.fitTimeout = null;
       if (!this.term || !this.fitAddon) return;
       const dim = this.fitAddon.proposeDimensions();
@@ -7932,6 +7977,12 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.plugin?._trackedTerminalViews?.delete(this);
     this.resizeObserver?.disconnect();
     this.themeObserver?.disconnect();
+    if (this._reconcileTimer) {
+      // Loop also self-stops via the _isDisposed check; clear best-effort.
+      try { (this.termHost?.ownerDocument?.defaultView || window).clearTimeout(this._reconcileTimer); } catch (e) {}
+      clearTimeout(this._reconcileTimer);
+      this._reconcileTimer = null;
+    }
     if (this.fitTimeout) {
       clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
