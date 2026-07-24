@@ -7585,7 +7585,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     });
     this.ensureFitWithRetry();
     this.resizeObserver = new ResizeObserver(() => {
-      if (this._fitInProgress) return;
+      // Don't drop a resize that lands mid-fit — remember it so fit()'s release
+      // handler reprocesses it. Otherwise a maximize/restore whose single resize
+      // event coincides with an in-progress fit leaves the terminal at the old
+      // grid (stale/"squished" text — see #94).
+      if (this._fitInProgress) { this._pendingResize = true; return; }
       this.debouncedFit();
     });
     this.resizeObserver.observe(this.termHost);
@@ -7632,6 +7636,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (!this.term || !this.fitAddon) return;
     if (this._fitInProgress) return;
     this._fitInProgress = true;
+    // Tie the release to THIS fit. Both release paths below (rAF chain + setTimeout
+    // safety net) capture `gen`; a later fit bumps _fitGen, so a stale release from
+    // an earlier fit can't clear a newer fit's flag mid-fit (which would re-open the
+    // re-entrant fit loop from #80). See PR #94 review.
+    const gen = this._fitGen = (this._fitGen || 0) + 1;
     try {
       const userScrolled = Date.now() - (this.userScrolledAt || 0) < 5000;
       const wasAtBottom = !userScrolled && this.term.buffer.active.baseY === this.term.buffer.active.viewportY;
@@ -7648,21 +7657,80 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     } catch (e) {}
     // Release on the frame after next so any ResizeObserver callbacks
-    // caused by this fit() are swallowed instead of re-entering.
-    requestAnimationFrame(() => requestAnimationFrame(() => {
+    // caused by this fit() are swallowed instead of re-entering. Use the
+    // terminal's OWN window: in a popout that occludes the main window, the main
+    // window's rAF is halted, which would strand this flag `true` and make the
+    // ResizeObserver ignore all later resizes (#94). The setTimeout is a safety net.
+    const relWin = this.termHost?.ownerDocument?.defaultView || window;
+    const release = () => {
+      if (gen !== this._fitGen || this._fitInProgress === false) return;
       this._fitInProgress = false;
-    }));
+      // Reprocess a resize the ResizeObserver dropped while a fit was in progress.
+      if (this._pendingResize) { this._pendingResize = false; this.debouncedFit(); }
+    };
+    relWin.requestAnimationFrame(() => relWin.requestAnimationFrame(release));
+    this._relTimeoutWin = relWin;
+    this._relTimeout = relWin.setTimeout(release, 250);
   }
   debouncedFit() {
-    if (this.fitTimeout) clearTimeout(this.fitTimeout);
-    this.fitTimeout = setTimeout(() => {
+    // Schedule on the terminal's OWN window: main-window timers are throttled when
+    // a maximized popout occludes the main window, which would otherwise delay the
+    // fit (#94). Clear the pending timer on the window that created it — timer IDs
+    // are per-window small integers, so clearing a popout-minted id on the main
+    // window would likely cancel an unrelated main-window timer.
+    const ownWin = this.termHost?.ownerDocument?.defaultView || window;
+    if (this.fitTimeout) this._fitTimeoutWin?.clearTimeout(this.fitTimeout);
+    this._fitTimeoutWin = ownWin;
+    this.fitTimeout = ownWin.setTimeout(() => {
       this.fitTimeout = null;
       if (!this.term || !this.fitAddon) return;
+      // Keep xterm's renderer bound to the window the terminal is actually shown in.
+      // On an already-open terminal, Terminal.open() does nothing but rebind
+      // CoreBrowserService.window (no DOM work) — the supported way to move a
+      // terminal between windows. Without it a popped-out terminal keeps painting on
+      // the main window's rAF and stops repainting once the maximized popout occludes
+      // that window (#94). Runs here because onLayoutChange (popout) and the
+      // ResizeObserver (maximize) both route through debouncedFit.
+      try { this.term.open(this.termHost); } catch (e) {}
+      // Ensure the popout poll is running (started here, where the terminal's
+      // window is correctly resolved — at onLayoutChange time the leaf may not
+      // have moved into the popout yet). No-op when docked or already running.
+      this._ensurePopoutReconcile();
       const dim = this.fitAddon.proposeDimensions();
       if (!dim || dim.cols <= 0 || dim.rows <= 0) return;
       if (dim.cols === this.term.cols && dim.rows === this.term.rows) return;
       this.fit();
     }, 100);
+  }
+  // Poll-reconcile the fit ONLY while the terminal is popped out (#94 review).
+  // A docked terminal relies on the ResizeObserver + onLayoutChange, which are
+  // reliable when the window isn't occluded — so no poll cost in the common case.
+  // A popped-out window, once maximized, occludes the main window: its timers/rAF
+  // are throttled AND the ResizeObserver doesn't reliably deliver the maximize, so
+  // the grid can strand. The poll runs on the popout's OWN clock (active, not
+  // throttled), re-fits on divergence, and self-stops the moment the leaf re-docks.
+  _ensurePopoutReconcile() {
+    if (this._reconcileTimer || this._isDisposed) return;
+    const isPopout = () => (this.termHost?.ownerDocument?.defaultView || window) !== window;
+    if (!isPopout()) return;
+    const tick = () => {
+      this._reconcileTimer = null;
+      if (this._isDisposed || !isPopout()) return; // re-docked → stop polling
+      const w = this.termHost.ownerDocument.defaultView;
+      try {
+        if (this.term && this.fitAddon && !this._fitInProgress) {
+          const dim = this.fitAddon.proposeDimensions();
+          if (dim && dim.cols > 0 && dim.rows > 0 && (dim.cols !== this.term.cols || dim.rows !== this.term.rows)) {
+            this.debouncedFit();
+          }
+        }
+      } catch (e) {}
+      this._reconcileTimerWin = w;
+      this._reconcileTimer = w.setTimeout(tick, 400);
+    };
+    const w = this.termHost.ownerDocument.defaultView;
+    this._reconcileTimerWin = w;
+    this._reconcileTimer = w.setTimeout(tick, 400);
   }
   async waitForHostReady() {
     if (!this.fitAddon)
@@ -7932,9 +8000,20 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.plugin?._trackedTerminalViews?.delete(this);
     this.resizeObserver?.disconnect();
     this.themeObserver?.disconnect();
+    // Clear pending timers on the window that created them (they may be
+    // popout-minted; a bare clearTimeout would run on the main window and could
+    // cancel an unrelated timer that happens to share the id — see #94 review).
     if (this.fitTimeout) {
-      clearTimeout(this.fitTimeout);
+      (this._fitTimeoutWin || window).clearTimeout(this.fitTimeout);
       this.fitTimeout = null;
+    }
+    if (this._relTimeout) {
+      (this._relTimeoutWin || window).clearTimeout(this._relTimeout);
+      this._relTimeout = null;
+    }
+    if (this._reconcileTimer) {
+      (this._reconcileTimerWin || window).clearTimeout(this._reconcileTimer);
+      this._reconcileTimer = null;
     }
     if (this.ctrlOFocusIn) {
       this.containerEl.removeEventListener('focusin', this.ctrlOFocusIn);
