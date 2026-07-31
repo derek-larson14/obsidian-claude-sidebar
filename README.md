@@ -78,15 +78,17 @@ Use `wsl.exe` when your Claude install, Node, or git toolchain lives in a WSL di
 
 https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 
-- Click the bot icon in the left ribbon to open Claude
+- Click the bot icon in the left ribbon to open a tab
 - Right-click the bot icon for YOLO mode, folder targeting, or resuming a conversation
-- Right-click any folder for "Open Claude here" or "Open Claude here (YOLO)"
+- Right-click any folder for "Open here" or "Open here (YOLO)" - both name your current CLI
 - Use Command Palette (`Cmd+P`) for all commands:
-  - **Open Claude Code** / **New Claude Tab** / **Close Claude Tab**
-  - **Toggle Focus: Editor ↔ Claude** - Quick switch between editor and Claude
-  - **Run Claude from this folder** - Start Claude in the active file's directory
+  - **Open terminal** / **New agent tab** / **Close agent tab**
+  - **New agent tab (other CLI)…** - One-off tab on another CLI, default unchanged
+  - **Switch default CLI provider…** - Change which CLI every new tab uses
+  - **Toggle Focus: Editor ↔ Agent** - Quick switch between editor and agent
+  - **Run agent from this folder** - Start the agent in the active file's directory
   - **Resume last conversation** - Pick up where you left off (`--continue`)
-  - **Send File Path to Claude** / **Send Selection to Claude**
+  - **Send file path to agent** / **Send selection to agent**
 - Press `Shift+Enter` for multi-line input
 - Set your own hotkeys in Settings → Hotkeys
 
