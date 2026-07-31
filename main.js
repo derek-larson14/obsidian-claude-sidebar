@@ -6801,15 +6801,25 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.workingDir = null;
     // YOLO mode (--dangerously-skip-permissions)
     this.yoloMode = false;
+    // Per-tab CLI provider override. null = follow the default in settings.
+    this.backendKey = null;
+  }
+  getBackendKey() {
+    const key = this.backendKey || this.plugin.pluginData.cliBackend || "claude";
+    return CLI_BACKENDS[key] ? key : "claude";
   }
   getBackend() {
-    const key = this.plugin.pluginData.cliBackend || "claude";
-    return CLI_BACKENDS[key] || CLI_BACKENDS.claude;
+    return CLI_BACKENDS[this.getBackendKey()];
   }
   getViewType() {
     return VIEW_TYPE;
   }
   getDisplayText() {
+    // Only override-tabs get a provider-specific title, so the default tab name
+    // stays stable for everyone who never touches the per-tab switcher.
+    if (this.backendKey && CLI_BACKENDS[this.backendKey]) {
+      return CLI_BACKENDS[this.backendKey].label;
+    }
     return "Claude";
   }
   getIcon() {
@@ -6827,8 +6837,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (state?.continueSession) {
       this.continueSession = state.continueSession;
     }
+    if (state?.backendKey && CLI_BACKENDS[state.backendKey]) {
+      this.backendKey = state.backendKey;
+    }
     // If shell already started, restart with new settings
-    if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession)) {
+    if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession || state?.backendKey)) {
       this.startShell(this.workingDir, this.yoloMode, this.continueSession);
     }
   }
@@ -6836,6 +6849,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     const state = {};
     if (this.workingDir) state.workingDir = this.workingDir;
     if (this.yoloMode) state.yoloMode = this.yoloMode;
+    // Persisted so a one-off provider tab comes back as that provider on restore
+    if (this.backendKey) state.backendKey = this.backendKey;
     // Don't persist continueSession — it's a one-time action
     return state;
   }
@@ -7812,8 +7827,8 @@ var TerminalView = class extends import_obsidian.ItemView {
         cmd = "python";
       }
     }
-    const backend = this.getBackend();
-    const backendKey = this.plugin.pluginData.cliBackend || "claude";
+    const backendKey = this.getBackendKey();
+    const backend = CLI_BACKENDS[backendKey];
     let cliCmd = backend.binary;
     if (yoloMode && backend.yoloFlag) cliCmd += " " + backend.yoloFlag;
     const flagsByProvider = this.plugin.pluginData.flagsByProvider || {};
@@ -8067,11 +8082,14 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.fitAddon = null;
   }
 };
+// mode "default": change the saved default provider, then open a tab with it.
+// mode "once":    open a tab with the chosen provider and leave the default alone.
 var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
-  constructor(app, plugin) {
+  constructor(app, plugin, mode = "default") {
     super(app);
     this.plugin = plugin;
-    this.setPlaceholder("Switch CLI provider…");
+    this.mode = mode;
+    this.setPlaceholder(mode === "once" ? "Open a tab with…" : "Switch default CLI provider…");
   }
   getSuggestions(query) {
     const q = query.toLowerCase();
@@ -8081,10 +8099,17 @@ var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
       .filter(({ backend }) => backend.label.toLowerCase().includes(q) || backend.binary.toLowerCase().includes(q));
   }
   renderSuggestion(item, el) {
-    el.createEl("div", { text: item.backend.label + (item.isCurrent ? "  (current)" : "") });
+    const suffix = item.isCurrent ? (this.mode === "once" ? "  (default)" : "  (current)") : "";
+    el.createEl("div", { text: item.backend.label + suffix });
     el.createEl("small", { text: item.backend.binary, cls: "vault-terminal-suggest-binary" });
   }
   async onChooseSuggestion(item) {
+    if (this.mode === "once") {
+      // Pass the key explicitly even when it matches the default, so the tab
+      // keeps running that provider if the default changes later.
+      this.plugin.createNewTab(null, false, false, item.key);
+      return;
+    }
     this.plugin.pluginData.cliBackend = item.key;
     await this.plugin.saveData(this.plugin.pluginData);
     this.plugin.createNewTab();
@@ -8291,8 +8316,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "switch-cli-provider",
-      name: "Switch CLI provider…",
-      callback: () => new CliProviderSwitchModal(this.app, this).open()
+      name: "Switch default CLI provider…",
+      callback: () => new CliProviderSwitchModal(this.app, this, "default").open()
+    });
+    this.addCommand({
+      id: "new-tab-with-cli-provider",
+      name: "New Tab (other CLI)…",
+      callback: () => new CliProviderSwitchModal(this.app, this, "once").open()
     });
     this.addCommand({
       id: "new-claude-tab",
@@ -8524,7 +8554,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
-  async createNewTab(workingDir = null, yoloMode = false, continueSession = false) {
+  async createNewTab(workingDir = null, yoloMode = false, continueSession = false, backendKey = null) {
     if (!this.layoutReady) return;
     const leaf = this.app.workspace.getRightLeaf(false);
     if (leaf) {
@@ -8532,6 +8562,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       if (workingDir) state.workingDir = workingDir;
       if (yoloMode) state.yoloMode = yoloMode;
       if (continueSession) state.continueSession = continueSession;
+      if (backendKey) state.backendKey = backendKey;
       await leaf.setViewState({
         type: VIEW_TYPE,
         active: true,
