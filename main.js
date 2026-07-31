@@ -6803,6 +6803,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.yoloMode = false;
     // Per-tab CLI provider override. null = follow the default in settings.
     this.backendKey = null;
+    // The provider this tab actually launched with, pinned at startShell().
+    this.activeBackendKey = null;
   }
   getBackendKey() {
     const key = this.backendKey || this.plugin.pluginData.cliBackend || "claude";
@@ -6815,12 +6817,10 @@ var TerminalView = class extends import_obsidian.ItemView {
     return VIEW_TYPE;
   }
   getDisplayText() {
-    // Only override-tabs get a provider-specific title, so the default tab name
-    // stays stable for everyone who never touches the per-tab switcher.
-    if (this.backendKey && CLI_BACKENDS[this.backendKey]) {
-      return CLI_BACKENDS[this.backendKey].label;
-    }
-    return "Claude";
+    // activeBackendKey is pinned when the shell starts, so changing the default
+    // later doesn't relabel a tab that's still running the old provider.
+    const key = this.activeBackendKey || this.getBackendKey();
+    return CLI_BACKENDS[key].label;
   }
   getIcon() {
     return "bot";
@@ -7829,6 +7829,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     const backendKey = this.getBackendKey();
     const backend = CLI_BACKENDS[backendKey];
+    this.activeBackendKey = backendKey;
     let cliCmd = backend.binary;
     if (yoloMode && backend.yoloFlag) cliCmd += " " + backend.yoloFlag;
     const flagsByProvider = this.plugin.pluginData.flagsByProvider || {};
@@ -8112,6 +8113,7 @@ var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
     }
     this.plugin.pluginData.cliBackend = item.key;
     await this.plugin.saveData(this.plugin.pluginData);
+    this.plugin.refreshRibbonTooltip();
     this.plugin.createNewTab();
   }
 };
@@ -8136,13 +8138,14 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         drop.onChange(async (value) => {
           this.plugin.pluginData.cliBackend = value;
           await this.plugin.saveData(this.plugin.pluginData);
+          this.plugin.refreshRibbonTooltip();
           this.display();
         });
       });
     if (process.platform === "win32") {
       new import_obsidian.Setting(containerEl)
         .setName("Shell")
-        .setDesc("wsl.exe runs Claude inside WSL and translates vault paths to Linux paths via wslpath. cmd.exe runs Claude on Windows natively.")
+        .setDesc("wsl.exe runs the CLI inside WSL and translates vault paths to Linux paths via wslpath. cmd.exe runs it on Windows natively.")
         .addDropdown(drop => {
           drop.addOption("cmd", "cmd.exe");
           drop.addOption("wsl", "wsl.exe (WSL)");
@@ -8254,17 +8257,18 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         }
       })
     );
-    const ribbonIcon = this.addRibbonIcon("bot", "New Claude Tab", () => {
+    const ribbonIcon = this.addRibbonIcon("bot", `New ${this.getDefaultBackend().label} Tab`, () => {
       const now = Date.now();
       if (now - this.lastRibbonClick < 1500) return; // 1.5s throttle to prevent accidental double-clicks
       this.lastRibbonClick = now;
       this.createNewTab();
     });
+    this.ribbonIcon = ribbonIcon;
     // Right-click context menu
     ribbonIcon.addEventListener("contextmenu", (e) => {
       e.preventDefault();
       const menu = new import_obsidian.Menu();
-      const activeBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+      const activeBackend = this.getDefaultBackend();
       if (activeBackend.yoloFlag) {
         menu.addItem((item) => {
           item.setTitle("Open in YOLO mode")
@@ -8311,7 +8315,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "open-claude",
-      name: "Open Claude Code",
+      name: "Open terminal",
       callback: () => this.activateView()
     });
     this.addCommand({
@@ -8321,19 +8325,19 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "new-tab-with-cli-provider",
-      name: "New Tab (other CLI)…",
+      name: "New agent tab (other CLI)…",
       callback: () => new CliProviderSwitchModal(this.app, this, "once").open()
     });
     this.addCommand({
       id: "new-claude-tab",
-      name: "New Claude Tab",
+      name: "New agent tab",
       callback: () => this.createNewTab()
     });
     this.addCommand({
       id: "new-claude-tab-yolo",
-      name: "New Tab (YOLO mode)",
+      name: "New agent tab (YOLO mode)",
       checkCallback: (checking) => {
-        const backend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+        const backend = this.getDefaultBackend();
         if (!backend?.yoloFlag) return false;
         if (!checking) this.createNewTab(null, true);
         return true;
@@ -8341,7 +8345,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "close-claude-tab",
-      name: "Close Claude Tab",
+      name: "Close agent tab",
       checkCallback: (checking) => {
         const view = this.app.workspace.getActiveViewOfType(TerminalView);
         if (view) {
@@ -8353,12 +8357,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "toggle-claude-focus",
-      name: "Toggle Focus: Editor ↔ Claude",
+      name: "Toggle Focus: Editor ↔ Agent",
       callback: () => this.toggleFocus()
     });
     this.addCommand({
       id: "send-file-to-claude",
-      name: "Send File Path to Claude",
+      name: "Send file path to agent",
       checkCallback: (checking) => {
         const file = this.app.workspace.getActiveFile();
         if (!file) return false;
@@ -8372,7 +8376,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     });
     this.addCommand({
       id: "send-selection-to-claude",
-      name: "Send Selection to Claude",
+      name: "Send selection to agent",
       checkCallback: (checking) => {
         const editor = this.app.workspace.activeEditor?.editor;
         if (!editor) return false;
@@ -8390,7 +8394,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
 
     this.addCommand({
       id: "run-claude-from-folder",
-      name: "Run Claude from this folder",
+      name: "Run agent from this folder",
       callback: () => {
         const file = this.app.workspace.getActiveFile();
         let dir = null;
@@ -8406,7 +8410,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       id: "resume-claude",
       name: "Resume last conversation",
       checkCallback: (checking) => {
-        const backend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
+        const backend = this.getDefaultBackend();
         if (!backend?.resumeFlag) return false;
         if (!checking) {
           const lastCwd = this.pluginData.lastCwd || null;
@@ -8420,20 +8424,20 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.registerEvent(
       this.app.workspace.on('file-menu', (menu, file, source) => {
         if (file instanceof import_obsidian.TFolder) {
+          const folderBackend = this.getDefaultBackend();
           menu.addItem(item =>
             item
-              .setTitle('Open Claude here')
+              .setTitle(`Open ${folderBackend.label} here`)
               .setIcon('bot')
               .onClick(() => {
                 const absolutePath = this.app.vault.adapter.getFullPath(file.path);
                 this.createNewTab(absolutePath);
               })
           );
-          const folderBackend = CLI_BACKENDS[this.pluginData.cliBackend || "claude"];
           if (folderBackend.yoloFlag) {
             menu.addItem(item =>
               item
-                .setTitle('Open Claude here (YOLO)')
+                .setTitle(`Open ${folderBackend.label} here (YOLO)`)
                 .setIcon('zap')
                 .onClick(() => {
                   const absolutePath = this.app.vault.adapter.getFullPath(file.path);
@@ -8444,7 +8448,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         } else if (file instanceof import_obsidian.TFile) {
           menu.addItem(item =>
             item
-              .setTitle('Send file path to Claude')
+              .setTitle(`Send file path to ${this.getDefaultBackend().label}`)
               .setIcon('bot')
               .onClick(() => {
                 const absolutePath = `"${this.getPath(this.getVaultPath() + '/' + file.path)}" `;
@@ -8461,7 +8465,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         if (selection) {
           menu.addItem(item =>
             item
-              .setTitle('Send selection to Claude')
+              .setTitle(`Send selection to ${this.getDefaultBackend().label}`)
               .setIcon('bot')
               .onClick(() => {
                 const enriched = this.buildSelectionContext(editor, selection);
@@ -8553,6 +8557,15 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       return;
     }
     await this.createNewTab();
+  }
+  getDefaultBackend() {
+    return CLI_BACKENDS[this.pluginData.cliBackend] || CLI_BACKENDS.claude;
+  }
+  // Labels built at display time (ribbon, context menus) name the actual
+  // provider. Command names can't — they're registered once at load — so those
+  // stay provider-neutral rather than re-registering on every settings change.
+  refreshRibbonTooltip() {
+    this.ribbonIcon?.setAttribute("aria-label", `New ${this.getDefaultBackend().label} Tab`);
   }
   async createNewTab(workingDir = null, yoloMode = false, continueSession = false, backendKey = null) {
     if (!this.layoutReady) return;
