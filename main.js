@@ -6723,6 +6723,14 @@ var CLI_BACKENDS = {
     resumeFlag: "resume --last",
     resumeIsSubcommand: true,
   },
+  grok: {
+    label: "Grok Build",
+    binary: "grok",
+    pathHints: ["~/.grok/bin"],
+    yoloFlag: "--always-approve",
+    resumeFlag: "--continue",
+    resumeIsSubcommand: false,
+  },
   opencode: {
     label: "OpenCode",
     binary: "opencode",

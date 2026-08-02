@@ -8,12 +8,12 @@ Built by [Derek Larson](https://dtlarson.com) - [Pairs with Delegate commands �
 
 ## Features
 
-- **Auto-launches Claude** - Claude Code starts automatically
-- **Multiple tabs** - Run multiple Claude instances side by side
-- **Embedded Claude** - Full terminal with Claude in your Obsidian sidebar
-- **Folder & file context menu** - Right-click any folder to open Claude in that directory, or a file to send path to Claude
-- **YOLO mode** - Launch Claude with `--dangerously-skip-permissions` via right-click menus
-- **Multi-backend** - Switch between Claude Code, Codex, OpenCode, Gemini, Kimi Code, GitHub Copilot, Cursor Agent, and Pi in settings, or via **Switch CLI provider…** in the command palette
+- **Auto-launches your agent** - Your default CLI starts automatically
+- **Multiple tabs** - Run multiple agents side by side
+- **Embedded** - Full terminal with an agent in your Obsidian sidebar
+- **Folder & file context menu** - Right-click any folder to open your agent in that directory, or a file to send it the path
+- **YOLO mode** - Launch your agent with YOLO mode via right-click menus
+- **Multi-backend** - Switch between Claude Code, Codex, Grok Build, OpenCode, Gemini, Kimi Code, GitHub Copilot, Cursor Agent, and Pi in settings, or via **Switch CLI provider…** in the command palette
 
 ## Requirements
 
@@ -65,14 +65,14 @@ py -m pip install pywinpty
 
 Use `py -m pip` (not just `pip`) to avoid installing into a different Python interpreter than the one the plugin selects. If you see "pywinpty not installed" in the sidebar after installing, the error message will print the exact interpreter path — install pywinpty into that one.
 
-3. Pick whether to run Claude inside WSL or natively in `cmd.exe`. Configure in **Settings → Claude Sidebar → Shell** (Windows only — Linux/macOS always run `bash`):
+3. Pick whether to run your agent inside WSL or natively in `cmd.exe`. Configure in **Settings → Claude Sidebar → Shell** (Windows only — Linux/macOS always run `bash`):
 
 | Option | Spawns | Path translation |
 |--------|--------|------------------|
 | cmd.exe (default) | `cmd.exe` | none |
 | wsl.exe (WSL) | `wsl.exe` | Windows paths → Linux paths via `wslpath` |
 
-Use `wsl.exe` when your Claude install, Node, or git toolchain lives in a WSL distro. Vault paths sent to Claude (file path command, selection context, drag-drop, image paste, wikilink references) are converted to Linux form before reaching the CLI. Translation respects a custom `/etc/wsl.conf` `[automount]` root, so paths still resolve if your `C:\` mounts at `/c/` instead of `/mnt/c/`.
+Use `wsl.exe` when your agent CLI, Node, or git toolchain lives in a WSL distro. Vault paths sent to the agent (file path command, selection context, drag-drop, image paste, wikilink references) are converted to Linux form before reaching the CLI. Translation respects a custom `/etc/wsl.conf` `[automount]` root, so paths still resolve if your `C:\` mounts at `/c/` instead of `/mnt/c/`.
 
 ## Usage
 
