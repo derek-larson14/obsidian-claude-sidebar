@@ -3,7 +3,7 @@
 	"name": "Claude Sidebar",
 	"version": "1.9.1",
 	"minAppVersion": "1.0.0",
-	"description": "Run Claude Code, Codex, Grok, and other agent CLIs in your Obsidian sidebar.",
+	"description": "Run Claude Code, Codex, Grok, and other agent CLIs in your sidebar.",
 	"author": "Derek Larson",
 	"authorUrl": "https://github.com/derek-larson14",
 	"isDesktopOnly": true
