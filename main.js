@@ -7268,13 +7268,25 @@ var TerminalView = class extends import_obsidian.ItemView {
     fs.writeFileSync(tempPath, buffer);
     return tempPath;
   }
+  applyFontSize(size) {
+    if (!this.term) return;
+    const next = this.plugin.normalizeFontSize(size);
+    if (this.term.options.fontSize === next) return;
+    this.term.options.fontSize = next;
+    // fit() recalcs cols/rows for the new cell size; onResize notifies the PTY.
+    if (this._fitInProgress) {
+      this._pendingResize = true;
+    } else {
+      this.fit();
+    }
+  }
   initTerminal() {
     if (!this.termHost)
       return;
     this.term = new import_xterm.Terminal({
       cursorBlink: true,
       copyOnSelect: true,
-      fontSize: 13,
+      fontSize: this.plugin.getFontSize(),
       fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', monospace",
       theme: this.getThemeColors(),
       scrollback: 10000,
@@ -8214,6 +8226,27 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
         setTimeout(grow, 0);
       });
     envSetting.settingEl.addClass("claude-sidebar-env-setting");
+    new import_obsidian.Setting(containerEl)
+      .setName("Terminal font size")
+      .setDesc("Size of the terminal text in pixels (6–32). Default is 13. Applies to open tabs immediately.")
+      .addText(text => {
+        text.inputEl.type = "number";
+        text.inputEl.min = "6";
+        text.inputEl.max = "32";
+        text.inputEl.step = "1";
+        text.inputEl.style.width = "4.5em";
+        text
+          .setPlaceholder("13")
+          .setValue(String(this.plugin.getFontSize()))
+          .onChange(async (value) => {
+            const n = parseInt(value, 10);
+            // Ignore empty/partial while typing; only save valid in-range values.
+            if (!Number.isFinite(n) || n < 6 || n > 32) return;
+            this.plugin.pluginData.fontSize = n;
+            await this.plugin.saveData(this.plugin.pluginData);
+            this.plugin.applyFontSizeToOpenTerminals(n);
+          });
+      });
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
@@ -8222,10 +8255,29 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     this.lastRibbonClick = 0;
     this.pluginData = {};
   }
+  // Soft floor/ceiling so values can't go absurd. Floor is 6; ceiling is just
+  // a stop for runaway spinner clicks — not a hard product limit.
+  normalizeFontSize(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 13;
+    return Math.min(32, Math.max(6, Math.round(n)));
+  }
+  getFontSize() {
+    return this.normalizeFontSize(this.pluginData.fontSize ?? 13);
+  }
+  applyFontSizeToOpenTerminals(size) {
+    const next = this.normalizeFontSize(size);
+    for (const view of this._trackedTerminalViews || []) {
+      try { view.applyFontSize?.(next); } catch (_) {}
+    }
+  }
   async onload() {
     this.registerView(VIEW_TYPE, (leaf) => new TerminalView(leaf, this));
     this._trackedTerminalViews = new Set();
     this.pluginData = await this.loadData() || {};
+    if (this.pluginData.fontSize != null) {
+      this.pluginData.fontSize = this.normalizeFontSize(this.pluginData.fontSize);
+    }
     if (this.pluginData.additionalFlags && !this.pluginData.flagsByProvider) {
       const key = this.pluginData.cliBackend || "claude";
       this.pluginData.flagsByProvider = { [key]: this.pluginData.additionalFlags };
