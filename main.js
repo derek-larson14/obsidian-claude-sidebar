@@ -7347,6 +7347,28 @@ var TerminalView = class extends import_obsidian.ItemView {
         callback(links.length ? links : void 0);
       }
     });
+    this.term.registerLinkProvider?.({
+      provideLinks: (y, callback) => {
+        const line = this.term?.buffer.active.getLine(y - 1);
+        if (!line) return callback(void 0);
+        const text = line.translateToString(true);
+        const links = [];
+        const reUrl = /https?:\/\/[^\s\x00-\x1f"'<>()\[\]{}\\^`|]+/g;
+        let m;
+        while ((m = reUrl.exec(text)) !== null) {
+          const url = m[0].replace(/[.,;:!?]+$/, "");
+          links.push({
+            text: url,
+            range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } },
+            activate: () => {
+              try { require("electron").shell.openExternal(url); }
+              catch (_) { window.open(url, "_blank"); }
+            }
+          });
+        }
+        callback(links.length ? links : void 0);
+      }
+    });
     // Handle image paste - use capture phase to intercept before xterm's textarea
     this.imagePasteHandler = async (e) => {
       // Only handle if terminal has focus
