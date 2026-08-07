@@ -7353,10 +7353,23 @@ var TerminalView = class extends import_obsidian.ItemView {
         if (!line) return callback(void 0);
         const text = line.translateToString(true);
         const links = [];
-        const reUrl = /https?:\/\/[^\s\x00-\x1f"'<>()\[\]{}\\^`|]+/g;
+        // Match http(s) URLs. Surrounding quotes (ASCII or curly) do not prevent a
+        // match — the scheme anchor starts inside them. Trailing closers/punctuation
+        // are trimmed after the match so wiki-style paths with parens still work.
+        const reUrl = /https?:\/\/[^\s\x00-\x1f<>]+/g;
         let m;
         while ((m = reUrl.exec(text)) !== null) {
-          const url = m[0].replace(/[.,;:!?]+$/, "");
+          let url = m[0];
+          // Strip trailing sentence punctuation
+          url = url.replace(/[.,;:!?]+$/u, "");
+          // Strip trailing quotes / brackets / braces / backticks (not parens —
+          // parens are handled below so wiki Foo_(bar) stays intact)
+          url = url.replace(/["'\]\}>`\u201d\u2019\u00bb]+$/u, "");
+          // Peel trailing ')' only while still unbalanced
+          while (url.endsWith(")") && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) {
+            url = url.slice(0, -1);
+          }
+          if (!/^https?:\/\/.+/.test(url)) continue;
           links.push({
             text: url,
             range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } },
