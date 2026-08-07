@@ -1,125 +1,26 @@
-# Claude Sidebar
+# Claude Sidebar - Private Claude Server
 
-Run Claude Code (and other agent CLIs) in your Obsidian sidebar.
+This branch adds support for pointing the plugin at a local/private Claude server launched via the native (non-Docker) installer from nicedreamzapp/claude-code-local.
 
-Built by [Derek Larson](https://dtlarson.com) - [Pairs with Delegate commands →](https://delegatewithclaude.com/commands)
-
-![Claude Sidebar](screenshot-obsidian.png)
-
-## Features
-
-- **Auto-launches your agent** - Your default CLI starts automatically
-- **Multiple tabs** - Run multiple agents side by side
-- **Embedded** - Full terminal with an agent in your Obsidian sidebar
-- **Folder & file context menu** - Right-click any folder to open your agent in that directory, or a file to send it the path
-- **YOLO mode** - Launch your agent with YOLO mode via right-click menus
-- **Multi-backend** - Switch between Claude Code, Codex, Grok Build, OpenCode, Gemini, Kimi Code, GitHub Copilot, Cursor Agent, and Pi in settings, or via **Switch CLI provider…** in the command palette
-
-## Requirements
-
-- macOS, Linux, or Windows
-- Python 3
-- An agent CLI — [Claude Code](https://claude.com/claude-code) (default), or any other [supported backend](#features)
-
-## Installation
-
-### From Community Plugins (recommended)
-
-Visit the plugin listing at [community.obsidian.md/plugins/claude-sidebar](https://community.obsidian.md/plugins/claude-sidebar) and click **Add to Obsidian**. Then in Obsidian, click **Install** → **Enable**.
-
-**Windows:** See [Windows Setup](#windows-setup) below.
-
-### Manual Installation (Mac/Linux)
-
-In your vault folder, run:
-```bash
-mkdir -p .obsidian/plugins/claude-sidebar && cd .obsidian/plugins/claude-sidebar && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/styles.css
-```
-
-Then in Obsidian: Settings → Community Plugins → Refresh → Enable "Claude Sidebar".
-
-### Manual Updating
-
-In your vault folder, run:
-```bash
-cd .obsidian/plugins/claude-sidebar && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/main.js && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/manifest.json && \
-  curl -LO https://github.com/derek-larson14/obsidian-claude-sidebar/releases/latest/download/styles.css
-```
-
-Then restart Obsidian or disable/re-enable the plugin.
-
-### Windows Setup
-
-After installing the plugin (via Community Plugins or manually), add Windows-specific dependencies:
-
-1. Install Python 3 from [python.org](https://python.org)
-2. Install pywinpty into the Python the plugin will use:
-```bash
-py -m pip install pywinpty
-```
-
-Use `py -m pip` (not just `pip`) to avoid installing into a different Python interpreter than the one the plugin selects. If you see "pywinpty not installed" in the sidebar after installing, the error message will print the exact interpreter path — install pywinpty into that one.
-
-3. Pick whether to run your agent inside WSL or natively in `cmd.exe`. Configure in **Settings → Claude Sidebar → Shell** (Windows only — Linux/macOS always run `bash`):
-
-| Option | Spawns | Path translation |
-|--------|--------|------------------|
-| cmd.exe (default) | `cmd.exe` | none |
-| wsl.exe (WSL) | `wsl.exe` | Windows paths → Linux paths via `wslpath` |
-
-Use `wsl.exe` when your agent CLI, Node, or git toolchain lives in a WSL distro. Vault paths sent to the agent (file path command, selection context, drag-drop, image paste, wikilink references) are converted to Linux form before reaching the CLI. Translation respects a custom `/etc/wsl.conf` `[automount]` root, so paths still resolve if your `C:\` mounts at `/c/` instead of `/mnt/c/`.
-
-## Usage
-
-https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
-
-- Click the bot icon in the left ribbon to open a tab
-- Right-click the bot icon for YOLO mode, folder targeting, or resuming a conversation
-- Right-click any folder for "Open here" or "Open here (YOLO)" - both name your current CLI
-- Use Command Palette (`Cmd+P`) for all commands:
-  - **Open terminal** / **New agent tab** / **Close agent tab**
-  - **New agent tab (other CLI)…** - One-off tab on another CLI, default unchanged
-  - **Switch default CLI provider…** - Change which CLI every new tab uses
-  - **Toggle Focus: Editor ↔ Agent** - Quick switch between editor and agent
-  - **Run agent from this folder** - Start the agent in the active file's directory
-  - **Resume last conversation** - Pick up where you left off (`--continue`)
-  - **Send file path to agent** / **Send selection to agent**
-- Press `Shift+Enter` for multi-line input
-- Set your own hotkeys in Settings → Hotkeys
-
-## Platform Support
-
-| Platform | Status |
-|----------|--------|
-| macOS | ✅ Supported |
-| Linux | ✅ Supported |
-| Windows | ✅ Supported |
-
-Want to use it on iOS or Android? See [Claude Anywhere](https://github.com/derek-larson14/claude-anywhere).
-
-## How It Works
-
-- [xterm.js](https://xtermjs.org/) for terminal emulation
-- Python's built-in `pty` module for pseudo-terminal support (macOS/Linux)
-- [pywinpty](https://github.com/andfoy/pywinpty) for Windows PTY support
-
-## Development
-
-The PTY scripts (`terminal_pty.py` for Unix, `terminal_win.py` for Windows) are embedded as base64 in `main.js` for Obsidian plugin directory compatibility. To rebuild after modifying:
+Quick start command the plugin offers to copy (no Docker required):
 
 ```bash
-./build.sh
+curl -fsSL https://raw.githubusercontent.com/nicedreamzapp/claude-code-local/main/setup.sh | bash
 ```
 
-## Contributing
+Example with a different model:
 
-Hit a bug or want to develop a new feature? Point your coding agent at `CLAUDE.md` in this repo. It will walk you through diagnosis, filing a report, or opening a PR.
+```bash
+MODEL=gemma4-31b bash setup.sh
+```
 
-## License
+What this change includes
 
-MIT
+- New settings UI for selecting server type, server URL, health path, and auto-detect
+- Buttons to open the claude-code-local quick-start README and copy the one-command installer to clipboard
+- Auto-detection of common localhost ports and a Test Connection button
+- Connector helpers for detection and sending requests to the configured server
+
+Security note
+
+The installer runs locally and should be reviewed before running. The plugin never executes the install command itself — it only copies it to your clipboard and provides documentation.
