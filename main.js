@@ -7347,6 +7347,41 @@ var TerminalView = class extends import_obsidian.ItemView {
         callback(links.length ? links : void 0);
       }
     });
+    this.term.registerLinkProvider?.({
+      provideLinks: (y, callback) => {
+        const line = this.term?.buffer.active.getLine(y - 1);
+        if (!line) return callback(void 0);
+        const text = line.translateToString(true);
+        const links = [];
+        // Match http(s) URLs. Surrounding quotes (ASCII or curly) do not prevent a
+        // match — the scheme anchor starts inside them. Trailing closers/punctuation
+        // are trimmed after the match so wiki-style paths with parens still work.
+        const reUrl = /https?:\/\/[^\s\x00-\x1f<>]+/g;
+        let m;
+        while ((m = reUrl.exec(text)) !== null) {
+          let url = m[0];
+          // Strip trailing sentence punctuation
+          url = url.replace(/[.,;:!?]+$/u, "");
+          // Strip trailing quotes / brackets / braces / backticks (not parens —
+          // parens are handled below so wiki Foo_(bar) stays intact)
+          url = url.replace(/["'\]\}>`\u201d\u2019\u00bb]+$/u, "");
+          // Peel trailing ')' only while still unbalanced
+          while (url.endsWith(")") && (url.match(/\(/g) || []).length < (url.match(/\)/g) || []).length) {
+            url = url.slice(0, -1);
+          }
+          if (!/^https?:\/\/.+/.test(url)) continue;
+          links.push({
+            text: url,
+            range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } },
+            activate: () => {
+              try { require("electron").shell.openExternal(url); }
+              catch (_) { window.open(url, "_blank"); }
+            }
+          });
+        }
+        callback(links.length ? links : void 0);
+      }
+    });
     // Handle image paste - use capture phase to intercept before xterm's textarea
     this.imagePasteHandler = async (e) => {
       // Only handle if terminal has focus
