@@ -6709,6 +6709,7 @@ var VIEW_TYPE = "vault-terminal";
 var CLI_BACKENDS = {
   claude: {
     label: "Claude Code",
+    short: "Claude",
     binary: "claude",
     pathHints: ["~/.local/bin"],
     yoloFlag: "--dangerously-skip-permissions",
@@ -6717,6 +6718,7 @@ var CLI_BACKENDS = {
   },
   codex: {
     label: "Codex",
+    short: "Codex",
     binary: "codex",
     pathHints: [],
     yoloFlag: "--yolo",
@@ -6725,6 +6727,7 @@ var CLI_BACKENDS = {
   },
   grok: {
     label: "Grok Build",
+    short: "Grok",
     binary: "grok",
     pathHints: ["~/.grok/bin"],
     yoloFlag: "--always-approve",
@@ -6733,6 +6736,7 @@ var CLI_BACKENDS = {
   },
   opencode: {
     label: "OpenCode",
+    short: "OpenCode",
     binary: "opencode",
     pathHints: ["/opt/homebrew/bin"],
     yoloFlag: null,
@@ -6741,6 +6745,7 @@ var CLI_BACKENDS = {
   },
   antigravity: {
     label: "Antigravity CLI",
+    short: "Antigravity",
     binary: "agy",
     pathHints: ["~/.local/bin"],
     yoloFlag: "--dangerously-skip-permissions",
@@ -6749,6 +6754,7 @@ var CLI_BACKENDS = {
   },
   kimi: {
     label: "Kimi Code",
+    short: "Kimi",
     binary: "kimi",
     pathHints: [],
     yoloFlag: "--yolo",
@@ -6757,6 +6763,7 @@ var CLI_BACKENDS = {
   },
   copilot: {
     label: "GitHub Copilot CLI",
+    short: "Copilot",
     binary: "copilot",
     pathHints: ["/opt/homebrew/bin"],
     yoloFlag: "--allow-all",
@@ -6765,6 +6772,7 @@ var CLI_BACKENDS = {
   },
   cursor: {
     label: "Cursor Agent",
+    short: "Cursor",
     binary: "cursor-agent",
     pathHints: ["~/.local/bin"],
     yoloFlag: "--yolo",
@@ -6773,6 +6781,7 @@ var CLI_BACKENDS = {
   },
   pi: {
     label: "Pi",
+    short: "Pi",
     binary: "pi",
     pathHints: [],
     yoloFlag: null,
@@ -6853,7 +6862,11 @@ var TerminalView = class extends import_obsidian.ItemView {
     // activeBackendKey is pinned when the shell starts, so changing the default
     // later doesn't relabel a tab that's still running the old provider.
     const key = this.activeBackendKey || this.getBackendKey();
-    return CLI_BACKENDS[key].label;
+    const backend = CLI_BACKENDS[key] || CLI_BACKENDS.claude;
+    const name = backend.short || backend.label;
+    const dir = this.plugin.resolveCwd(this.workingDir);
+    const folder = dir ? path.basename(dir) : "";
+    return folder ? `${name} \u2014 ${folder}` : name;
   }
   getIcon() {
     return "bot";
@@ -7860,10 +7873,7 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   startShell(workingDir = null, yoloMode = false, continueSession = false) {
     this.stopShell();
-    const defaultDir = this.plugin.pluginData.defaultWorkingDir;
-    const vaultPath = this.plugin.getVaultPath();
-    const resolvedDefault = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
-    const cwd = workingDir || resolvedDefault;
+    const cwd = this.plugin.resolveCwd(workingDir);
     // Persist last working directory for resume
     this.plugin.pluginData.lastCwd = cwd;
     this.plugin.saveData(this.plugin.pluginData);
@@ -7945,33 +7955,8 @@ var TerminalView = class extends import_obsidian.ItemView {
         delete shellEnv[pathKey];
       }
     }
-    if (!isWindows) {
-      try {
-        const shellOutput = (0, import_child_process.execSync)(
-          `${shell} -lic 'echo "__PATH__"; echo "$PATH"'`,
-          { encoding: 'utf8', timeout: 5000 }
-        );
-        // Extract PATH from after the marker (shell integration escapes pollute early output)
-        const shellPath = shellOutput.split('__PATH__\n')[1]?.trim().split('\n')[0];
-        if (shellPath) {
-          shellEnv.PATH = shellPath;
-        }
-      } catch (e) {
-        // Fall back to process.env.PATH if shell init fails
-        console.warn('[Claude Sidebar] PATH detection timed out — falling back to system PATH. If tools are missing, check your shell startup time.');
-      }
-    } else {
-      try {
-        const psOut = (0, import_child_process.execSync)(
-          `powershell.exe -NoProfile -NonInteractive -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`,
-          { encoding: "utf8", timeout: 5000, windowsHide: true }
-        );
-        const freshPath = psOut.trim();
-        if (freshPath) shellEnv.PATH = freshPath;
-      } catch (e) {
-        console.warn("[Claude Sidebar] Windows PATH refresh failed — falling back to process PATH.");
-      }
-    }
+    const userPath = this.plugin.resolveUserPath();
+    if (userPath) shellEnv.PATH = userPath;
     // Ensure backend-specific paths are available
     for (const hint of pathHints) {
       if (hint && shellEnv.PATH && !shellEnv.PATH.includes(hint)) {
@@ -8235,6 +8220,118 @@ var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
     this.plugin.createNewTab();
   }
 };
+var MAX_RECENT_PROJECTS = 20;
+var ProjectPickerModal = class extends import_obsidian.SuggestModal {
+  constructor(app, plugin) {
+    super(app);
+    this.plugin = plugin;
+    this.setPlaceholder("Open an agent in\u2026");
+    // Numbers are bound once, in definition order, and never move as you toggle
+    // between them: \u23182 is Codex whether or not Codex is the armed CLI.
+    // Bare digits can't be used \u2014 the search field would swallow them.
+    this.backends = plugin.installedBackends();
+    this.backendOverride = null;
+    this.backends.forEach(([key], i) => {
+      this.scope.register(["Mod"], String(i + 1), (evt) => {
+        evt.preventDefault();
+        this.backendOverride = key;
+        this.renderFooter();
+        return false;
+      });
+    });
+  }
+  onOpen() {
+    super.onOpen();
+    this.renderFooter();
+  }
+  // "Mod" binds to Cmd on macOS and Ctrl on Windows and Linux; this prints the
+  // shortcut the way each platform writes it.
+  modLabel(key) {
+    return process.platform === "darwin" ? `\u2318${key}` : `Ctrl+${key}`;
+  }
+  activeBackendKey() {
+    return this.backendOverride || this.plugin.pluginData.cliBackend || "claude";
+  }
+  renderFooter() {
+    if (!this.footerEl) {
+      this.footerEl = this.modalEl.createDiv({ cls: "vault-terminal-picker-footer" });
+    }
+    this.footerEl.empty();
+    const activeKey = this.activeBackendKey();
+    const active = CLI_BACKENDS[activeKey];
+    const enter = this.footerEl.createSpan({ cls: "vault-terminal-picker-enter" });
+    enter.createSpan({ text: "\u21B5", cls: "vault-terminal-picker-num" });
+    enter.createSpan({ text: `opens with ${active?.short || active?.label || activeKey}` });
+    // The armed CLI is named on the left, so listing it again as a shortcut is
+    // noise. Its number stays bound, it just isn't shown.
+    this.backends.forEach(([key, backend], i) => {
+      if (key === activeKey) return;
+      const span = this.footerEl.createSpan({ cls: "vault-terminal-picker-key" });
+      span.createSpan({ text: this.modLabel(i + 1), cls: "vault-terminal-picker-num" });
+      span.createSpan({ text: backend.short || backend.label });
+      span.onclick = () => {
+        this.backendOverride = key;
+        this.renderFooter();
+      };
+    });
+  }
+  async forget(dir) {
+    await this.plugin.forgetProject(dir);
+    // Re-run the search so the row disappears without closing the modal.
+    this.inputEl.dispatchEvent(new Event("input"));
+  }
+  getSuggestions(query) {
+    const q = query.toLowerCase();
+    const items = this.plugin.listProjectFolders()
+      .filter((it) => it.name.toLowerCase().includes(q) || it.dir.toLowerCase().includes(q));
+    items.push({
+      dir: null,
+      name: "Browse\u2026",
+      hint: "Open any folder on this machine.",
+      source: "browse"
+    });
+    return items;
+  }
+  renderSuggestion(item, el) {
+    el.addClass("vault-terminal-picker-item");
+    if (!item.dir) {
+      el.addClass("vault-terminal-picker-action");
+      const icon = el.createSpan({ cls: "vault-terminal-picker-icon" });
+      import_obsidian.setIcon(icon, "folder-search");
+    }
+    el.createEl("div", { text: item.name, cls: "vault-terminal-picker-title" });
+    const sub = item.dir ? this.plugin.tildePath(item.dir) : item.hint;
+    if (sub) el.createEl("small", { text: sub, cls: "vault-terminal-suggest-binary" });
+    if (item.dir) {
+      const forget = el.createSpan({
+        cls: "vault-terminal-picker-forget",
+        attr: { "aria-label": "Remove from list", title: "Remove from list" }
+      });
+      import_obsidian.setIcon(forget, "x");
+      // Choose runs on mouseup of the row. Forget on click, and stop the
+      // whole press so a removed row doesn't leave a click on the one below.
+      const stop = (evt) => {
+        evt.preventDefault();
+        evt.stopPropagation();
+      };
+      forget.addEventListener("mousedown", stop);
+      forget.addEventListener("mouseup", stop);
+      forget.addEventListener("click", (evt) => {
+        stop(evt);
+        this.forget(item.dir);
+      });
+    }
+  }
+  async onChooseSuggestion(item) {
+    let dir = item.dir;
+    if (!dir) {
+      dir = await this.plugin.promptForFolder("Open an agent in\u2026");
+      if (!dir) return;
+    }
+    await this.plugin.recordRecentProject(dir);
+    this.plugin.createNewTab(dir, false, false, this.activeBackendKey());
+  }
+};
 var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
@@ -8445,6 +8542,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         });
       }
       menu.addItem((item) => {
+        item.setTitle("Open agent in project\u2026")
+          .setIcon("folder-open")
+          .onClick(() => {
+            new ProjectPickerModal(this.app, this).open();
+          });
+      });
+      menu.addItem((item) => {
         item.setTitle("Run from active folder")
           .setIcon("folder-open")
           .onClick(() => {
@@ -8485,6 +8589,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       id: "switch-cli-provider",
       name: "Switch default CLI provider…",
       callback: () => new CliProviderSwitchModal(this.app, this, "default").open()
+    });
+    this.addCommand({
+      id: "open-agent-in-project",
+      name: "Open agent in project\u2026",
+      callback: () => new ProjectPickerModal(this.app, this).open()
     });
     this.addCommand({
       id: "new-tab-with-cli-provider",
@@ -8680,6 +8789,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     const adapter = this.app.vault.adapter;
     return adapter.basePath || "";
   }
+  resolveCwd(workingDir = null) {
+    const vaultPath = this.getVaultPath();
+    const defaultDir = this.pluginData.defaultWorkingDir;
+    const resolvedDefault = defaultDir ? path.resolve(vaultPath, defaultDir) : vaultPath;
+    return workingDir || resolvedDefault;
+  }
   resolveShell() {
     if (this._shell) return this._shell;
     if (process.platform !== "win32") {
@@ -8729,6 +8844,102 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   // stay provider-neutral rather than re-registering on every settings change.
   refreshRibbonTooltip() {
     this.ribbonIcon?.setAttribute("aria-label", `New ${this.getDefaultBackend().label} Tab`);
+  }
+  // GUI apps don't inherit shell config, so process.env.PATH misses most CLIs.
+  // This is the same login-shell probe the launcher uses, cached for the session
+  // because it costs a shell startup.
+  resolveUserPath() {
+    if (this._cachedUserPath !== void 0) return this._cachedUserPath;
+    const pathKey = Object.keys(process.env).find((k) => k.toUpperCase() === "PATH");
+    let resolved = pathKey ? process.env[pathKey] : "";
+    try {
+      if (process.platform === "win32") {
+        const psOut = (0, import_child_process.execSync)(
+          `powershell.exe -NoProfile -NonInteractive -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`,
+          { encoding: "utf8", timeout: 5000, windowsHide: true }
+        );
+        const freshPath = psOut.trim();
+        if (freshPath) resolved = freshPath;
+      } else {
+        const shell = this.resolveShell().binary;
+        const out = (0, import_child_process.execSync)(
+          `${shell} -lic 'echo "__PATH__"; echo "$PATH"'`,
+          { encoding: "utf8", timeout: 5000 }
+        );
+        const shellPath = out.split("__PATH__\n")[1]?.trim().split("\n")[0];
+        if (shellPath) resolved = shellPath;
+      }
+    } catch (_) {
+      console.warn("[Claude Sidebar] PATH detection timed out — falling back to system PATH. If tools are missing, check your shell startup time.");
+    }
+    this._cachedUserPath = resolved;
+    return resolved;
+  }
+  // Backends whose binary is actually on this machine, in definition order.
+  // These take the numbered shortcuts in the project picker, so the numbering
+  // reflects what you have installed rather than a fixed list.
+  installedBackends() {
+    // WSL's PATH is inside the distro. A Windows filesystem probe would hide
+    // CLIs the launcher will actually run.
+    if (this.resolveShell().kind === "wsl") {
+      return Object.entries(CLI_BACKENDS).slice(0, 9);
+    }
+    const homeDir = require("os").homedir();
+    const pathStr = this.resolveUserPath();
+    const found = Object.entries(CLI_BACKENDS).filter(([, backend]) => {
+      const hints = (backend.pathHints || []).map((h) => h.replace("~", homeDir));
+      return !!findCliBinary(backend.binary, pathStr, hints);
+    });
+    // If detection comes up short, offer everything rather than nothing.
+    return (found.length ? found : Object.entries(CLI_BACKENDS)).slice(0, 9);
+  }
+  tildePath(dir) {
+    const home = require("os").homedir();
+    return dir.startsWith(home + path.sep) ? "~" + dir.slice(home.length) : dir;
+  }
+  // Projects are just folders you've opened an agent in before. Browse adds one;
+  // this list remembers it. Missing paths stay saved so a synced vault or an
+  // unmounted drive doesn't wipe them; they just don't appear until they're back.
+  listProjectFolders() {
+    const recents = this.pluginData.recentProjects || [];
+    return recents.filter((dir) => {
+      try {
+        return fs.existsSync(dir);
+      } catch (_) {
+        return false;
+      }
+    }).map((dir) => ({ dir, name: path.basename(dir) }));
+  }
+  // Drops a project from the picker. The folder on disk is not touched.
+  async forgetProject(dir) {
+    this.pluginData.recentProjects = (this.pluginData.recentProjects || []).filter((d) => d !== dir);
+    await this.saveData(this.pluginData);
+  }
+  async recordRecentProject(dir) {
+    const recent = (this.pluginData.recentProjects || []).filter((d) => d !== dir);
+    recent.unshift(dir);
+    this.pluginData.recentProjects = recent.slice(0, MAX_RECENT_PROJECTS);
+    await this.saveData(this.pluginData);
+  }
+  async promptForFolder(title = "Choose a folder") {
+    try {
+      const electron = require("electron");
+      const dialog = electron.dialog || electron.remote?.dialog;
+      if (!dialog) {
+        new import_obsidian.Notice("Couldn't open the folder picker.");
+        return null;
+      }
+      const result = await dialog.showOpenDialog({
+        title,
+        properties: ["openDirectory"],
+        defaultPath: path.dirname(this.getVaultPath() || "")
+      });
+      if (result.canceled || !result.filePaths?.length) return null;
+      return result.filePaths[0];
+    } catch (_) {
+      new import_obsidian.Notice("Couldn't open the folder picker.");
+      return null;
+    }
   }
   async createNewTab(workingDir = null, yoloMode = false, continueSession = false, backendKey = null) {
     if (!this.layoutReady) return;

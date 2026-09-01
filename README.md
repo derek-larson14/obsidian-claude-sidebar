@@ -13,6 +13,7 @@ Built by [Derek Larson](https://dtlarson.com) - [Pairs with Delegate commands �
 - **Embedded** - Full terminal with an agent in your Obsidian sidebar
 - **Folder & file context menu** - Right-click any folder to open your agent in that directory, or a file to send it the path
 - **YOLO mode** - Launch your agent with YOLO mode via right-click menus
+- **Projects outside the vault** - **Open agent in project…** opens an agent in any folder on your machine. **Browse…** adds one, and it stays in the list afterwards; `⌘1`–`⌘9` pick which CLI to open it with
 - **Multi-backend** - Switch between Claude Code, Codex, Grok Build, OpenCode, Antigravity CLI, Kimi Code, GitHub Copilot, Cursor Agent, and Pi in settings, or via **Switch CLI provider…** in the command palette
 
 ## Requirements
@@ -84,6 +85,7 @@ https://github.com/user-attachments/assets/de98439a-8a1f-4a8a-9d02-44027d756462
 - Use Command Palette (`Cmd+P`) for all commands:
   - **Open terminal** / **New agent tab** / **Close agent tab**
   - **New agent tab (other CLI)…** - One-off tab on another CLI, default unchanged
+  - **Open agent in project…** - Start an agent in a project outside the vault
   - **Switch default CLI provider…** - Change which CLI every new tab uses
   - **Toggle Focus: Editor ↔ Agent** - Quick switch between editor and agent
   - **Run agent from this folder** - Start the agent in the active file's directory
@@ -109,6 +111,23 @@ Want to use it on iOS or Android? See [Claude Anywhere](https://github.com/derek
 - [pywinpty](https://github.com/andfoy/pywinpty) for Windows PTY support
 
 ## Development
+
+### Testing in Obsidian
+
+Symlink the repo into a scratch vault so edits load with no copy step. Reload
+after each change with Settings → Community plugins → toggle Claude Sidebar off/on:
+
+```bash
+ln -s "$PWD" /path/to/test-vault/.obsidian/plugins/claude-sidebar
+```
+
+To install a tested build into a real vault:
+
+```bash
+./install.sh /path/to/vault
+```
+
+### PTY scripts
 
 The PTY scripts (`terminal_pty.py` for Unix, `terminal_win.py` for Windows) are embedded as base64 in `main.js` for Obsidian plugin directory compatibility. To rebuild after modifying:
 

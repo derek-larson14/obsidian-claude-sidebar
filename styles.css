@@ -77,3 +77,96 @@
 	/* Prevent textarea from affecting layout while keeping it positioned correctly */
 	pointer-events: none;
 }
+
+.vault-terminal-picker-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  padding: 8px 12px;
+  border-top: 1px solid var(--background-modifier-border);
+  font-size: var(--font-ui-smaller);
+  color: var(--text-muted);
+}
+
+.vault-terminal-picker-enter {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--text-normal);
+}
+
+.vault-terminal-picker-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  cursor: pointer;
+}
+
+.vault-terminal-picker-key:hover {
+  color: var(--text-normal);
+}
+
+.vault-terminal-picker-num {
+  font-variant-numeric: tabular-nums;
+  opacity: 0.6;
+}
+
+/* Browse opens a dialog rather than a project, so it shouldn't read as one. */
+.vault-terminal-picker-action .vault-terminal-picker-title {
+  color: var(--text-accent);
+}
+
+.vault-terminal-picker-item {
+  position: relative;
+}
+
+.vault-terminal-picker-item:not(.vault-terminal-picker-action) {
+  padding-right: 26px;
+}
+
+.vault-terminal-picker-icon {
+  float: left;
+  margin-right: 8px;
+  color: var(--text-accent);
+  display: flex;
+  align-items: center;
+}
+
+.vault-terminal-picker-icon .svg-icon {
+  width: 16px;
+  height: 16px;
+}
+
+.vault-terminal-picker-forget {
+  position: absolute;
+  right: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  opacity: 0;
+  pointer-events: none;
+  color: var(--text-faint);
+  border-radius: var(--radius-s);
+  cursor: pointer;
+  transition: opacity 80ms ease;
+}
+
+.vault-terminal-picker-item:hover .vault-terminal-picker-forget {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.vault-terminal-picker-forget:hover {
+  color: var(--text-muted);
+  background-color: var(--background-modifier-hover);
+}
+
+.vault-terminal-picker-forget .svg-icon {
+  width: 14px;
+  height: 14px;
+}
