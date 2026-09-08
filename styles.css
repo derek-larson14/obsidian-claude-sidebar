@@ -45,6 +45,28 @@
 	scrollbar-gutter: stable;
 }
 
+/* Obsidian 1.13 restyles scrollbars app-wide and the terminal viewport lost its
+   visible thumb (#106). Draw our own, using Obsidian's variables so it matches
+   the vault theme. */
+.vault-terminal-host .xterm-viewport::-webkit-scrollbar {
+	width: 12px;
+}
+
+.vault-terminal-host .xterm-viewport::-webkit-scrollbar-track {
+	background: transparent;
+}
+
+.vault-terminal-host .xterm-viewport::-webkit-scrollbar-thumb {
+	background-color: var(--scrollbar-thumb-bg, var(--background-modifier-border));
+	border-radius: 6px;
+	border: 3px solid transparent;
+	background-clip: content-box;
+}
+
+.vault-terminal-host .xterm-viewport::-webkit-scrollbar-thumb:hover {
+	background-color: var(--scrollbar-active-thumb-bg, var(--text-faint));
+}
+
 /* Environment variables setting: stack vertically so the textarea spans full width */
 .claude-sidebar-env-setting {
 	display: block;

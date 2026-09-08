@@ -7291,7 +7291,32 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Light mode needs a more visible selection color
     const isLightMode = document.body.classList.contains("theme-light");
     const selectionBackground = isLightMode ? "rgba(0, 100, 200, 0.3)" : undefined;
-    return { background: bg, foreground: fg, cursor, selectionBackground };
+    const theme = { background: bg, foreground: fg, cursor, selectionBackground };
+    // Light-only ANSI override (#105). Do not restore the old #47 dark palette:
+    // that was reverted in 5f914d1 once Claude Code grew "Auto (match terminal)".
+    // The #47 light palette also set white/brightWhite to near-white, which is
+    // the survey-prompt hole. These two go dark so ANSI 7/15 stay readable.
+    if (isLightMode) {
+      Object.assign(theme, {
+        black: "#000000",
+        red: "#cd3131",
+        green: "#00754c",
+        yellow: "#8a6800",
+        blue: "#0451a5",
+        magenta: "#bc05bc",
+        cyan: "#0598bc",
+        white: "#3b3b3b",
+        brightBlack: "#666666",
+        brightRed: "#cd3131",
+        brightGreen: "#14ce14",
+        brightYellow: "#795e26",
+        brightBlue: "#0451a5",
+        brightMagenta: "#bc05bc",
+        brightCyan: "#0598bc",
+        brightWhite: "#1f1f1f",
+      });
+    }
+    return theme;
   }
   updateTheme() {
     if (!this.term) return;
@@ -7333,6 +7358,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       fontFamily: "Menlo, Monaco, 'Cascadia Mono', 'Cascadia Code', Consolas, 'Courier New', 'Microsoft YaHei', 'SimHei', 'PingFang SC', 'Noto Sans CJK SC', 'WenQuanYi Micro Hei', monospace",
       theme: this.getThemeColors(),
       scrollback: 10000,
+      minimumContrastRatio: 4.5,
       macOptionIsMeta: false
     });
     this.fitAddon = new import_addon_fit.FitAddon();
