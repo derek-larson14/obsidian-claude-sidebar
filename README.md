@@ -13,7 +13,7 @@ Built by [Derek Larson](https://dtlarson.com) - [Pairs with Delegate commands �
 - **Embedded** - Full terminal with an agent in your Obsidian sidebar
 - **Folder & file context menu** - Right-click any folder to open your agent in that directory, or a file to send it the path
 - **YOLO mode** - Launch your agent with YOLO mode via right-click menus
-- **Projects outside the vault** - **Open agent in project…** opens an agent in any folder on your machine. **Browse…** adds one, and it stays in the list afterwards; `⌘1`–`⌘9` pick which CLI to open it with
+- **Projects outside the vault** - **Open agent in project…** opens an agent in any folder on your machine. **Browse…** adds one, and it stays in the list afterwards. Pick the project, then the CLI (your default is on top, so Enter twice opens it). With only one CLI installed, it opens straight away
 - **Multi-backend** - Switch between Claude Code, Codex, Grok Build, OpenCode, Antigravity CLI, Kimi Code, GitHub Copilot, Cursor Agent, and Pi in settings, or via **Switch CLI provider…** in the command palette
 
 ## Requirements

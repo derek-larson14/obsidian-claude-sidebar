@@ -8214,17 +8214,28 @@ var TerminalView = class extends import_obsidian.ItemView {
 };
 // mode "default": change the saved default provider, then open a tab with it.
 // mode "once":    open a tab with the chosen provider and leave the default alone.
+// A projectDir makes "once" the second step of the project picker: only
+// installed CLIs are listed, default on top, so Enter twice opens the default.
 var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
-  constructor(app, plugin, mode = "default") {
+  constructor(app, plugin, mode = "default", projectDir = null) {
     super(app);
     this.plugin = plugin;
     this.mode = mode;
-    this.setPlaceholder(mode === "once" ? "Open a tab with…" : "Switch default CLI provider…");
+    this.projectDir = projectDir;
+    if (projectDir) {
+      const currentKey = plugin.pluginData.cliBackend || "claude";
+      this.setPlaceholder(`Open ${path.basename(projectDir)} with…`);
+      this.backends = plugin.installedBackends()
+        .sort(([a], [b]) => (b === currentKey) - (a === currentKey));
+    } else {
+      this.setPlaceholder(mode === "once" ? "Open a tab with…" : "Switch default CLI provider…");
+      this.backends = Object.entries(CLI_BACKENDS);
+    }
   }
   getSuggestions(query) {
     const q = query.toLowerCase();
     const currentKey = this.plugin.pluginData.cliBackend || "claude";
-    return Object.entries(CLI_BACKENDS)
+    return this.backends
       .map(([key, backend]) => ({ key, backend, isCurrent: key === currentKey }))
       .filter(({ backend }) => backend.label.toLowerCase().includes(q) || backend.binary.toLowerCase().includes(q));
   }
@@ -8235,6 +8246,10 @@ var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
   }
   async onChooseSuggestion(item) {
     if (this.mode === "once") {
+      if (this.projectDir) {
+        this.plugin.openInProject(this.projectDir, item.key);
+        return;
+      }
       // Pass the key explicitly even when it matches the default, so the tab
       // keeps running that provider if the default changes later.
       this.plugin.createNewTab(null, false, false, item.key);
@@ -8252,54 +8267,6 @@ var ProjectPickerModal = class extends import_obsidian.SuggestModal {
     super(app);
     this.plugin = plugin;
     this.setPlaceholder("Open an agent in\u2026");
-    // Numbers are bound once, in definition order, and never move as you toggle
-    // between them: \u23182 is Codex whether or not Codex is the armed CLI.
-    // Bare digits can't be used \u2014 the search field would swallow them.
-    this.backends = plugin.installedBackends();
-    this.backendOverride = null;
-    this.backends.forEach(([key], i) => {
-      this.scope.register(["Mod"], String(i + 1), (evt) => {
-        evt.preventDefault();
-        this.backendOverride = key;
-        this.renderFooter();
-        return false;
-      });
-    });
-  }
-  onOpen() {
-    super.onOpen();
-    this.renderFooter();
-  }
-  // "Mod" binds to Cmd on macOS and Ctrl on Windows and Linux; this prints the
-  // shortcut the way each platform writes it.
-  modLabel(key) {
-    return process.platform === "darwin" ? `\u2318${key}` : `Ctrl+${key}`;
-  }
-  activeBackendKey() {
-    return this.backendOverride || this.plugin.pluginData.cliBackend || "claude";
-  }
-  renderFooter() {
-    if (!this.footerEl) {
-      this.footerEl = this.modalEl.createDiv({ cls: "vault-terminal-picker-footer" });
-    }
-    this.footerEl.empty();
-    const activeKey = this.activeBackendKey();
-    const active = CLI_BACKENDS[activeKey];
-    const enter = this.footerEl.createSpan({ cls: "vault-terminal-picker-enter" });
-    enter.createSpan({ text: "\u21B5", cls: "vault-terminal-picker-num" });
-    enter.createSpan({ text: `opens with ${active?.short || active?.label || activeKey}` });
-    // The armed CLI is named on the left, so listing it again as a shortcut is
-    // noise. Its number stays bound, it just isn't shown.
-    this.backends.forEach(([key, backend], i) => {
-      if (key === activeKey) return;
-      const span = this.footerEl.createSpan({ cls: "vault-terminal-picker-key" });
-      span.createSpan({ text: this.modLabel(i + 1), cls: "vault-terminal-picker-num" });
-      span.createSpan({ text: backend.short || backend.label });
-      span.onclick = () => {
-        this.backendOverride = key;
-        this.renderFooter();
-      };
-    });
   }
   async forget(dir) {
     await this.plugin.forgetProject(dir);
@@ -8354,8 +8321,14 @@ var ProjectPickerModal = class extends import_obsidian.SuggestModal {
       dir = await this.plugin.promptForFolder("Open an agent in\u2026");
       if (!dir) return;
     }
-    await this.plugin.recordRecentProject(dir);
-    this.plugin.createNewTab(dir, false, false, this.activeBackendKey());
+    // Where first, then which CLI. With one CLI installed there's nothing to
+    // pick, so the tab opens straight away.
+    const backends = this.plugin.installedBackends();
+    if (backends.length === 1) {
+      this.plugin.openInProject(dir, backends[0][0]);
+      return;
+    }
+    new CliProviderSwitchModal(this.app, this.plugin, "once", dir).open();
   }
 };
 var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
@@ -8902,13 +8875,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     return resolved;
   }
   // Backends whose binary is actually on this machine, in definition order.
-  // These take the numbered shortcuts in the project picker, so the numbering
-  // reflects what you have installed rather than a fixed list.
+  // The project picker offers these, and skips the choice when there's one.
   installedBackends() {
     // WSL's PATH is inside the distro. A Windows filesystem probe would hide
     // CLIs the launcher will actually run.
     if (this.resolveShell().kind === "wsl") {
-      return Object.entries(CLI_BACKENDS).slice(0, 9);
+      return Object.entries(CLI_BACKENDS);
     }
     const homeDir = require("os").homedir();
     const pathStr = this.resolveUserPath();
@@ -8917,7 +8889,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       return !!findCliBinary(backend.binary, pathStr, hints);
     });
     // If detection comes up short, offer everything rather than nothing.
-    return (found.length ? found : Object.entries(CLI_BACKENDS)).slice(0, 9);
+    return found.length ? found : Object.entries(CLI_BACKENDS);
   }
   tildePath(dir) {
     const home = require("os").homedir();
@@ -8946,6 +8918,12 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     recent.unshift(dir);
     this.pluginData.recentProjects = recent.slice(0, MAX_RECENT_PROJECTS);
     await this.saveData(this.pluginData);
+  }
+  // Recorded only once a tab opens, so backing out of the CLI step doesn't
+  // add the folder to the list.
+  async openInProject(dir, backendKey) {
+    await this.recordRecentProject(dir);
+    this.createNewTab(dir, false, false, backendKey);
   }
   async promptForFolder(title = "Choose a folder") {
     try {
