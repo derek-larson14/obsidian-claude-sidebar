@@ -6847,6 +6847,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     this.backendKey = null;
     // The provider this tab actually launched with, pinned at startShell().
     this.activeBackendKey = null;
+    // Last title the CLI set via OSC 0/2 (Claude Code sends the session name).
+    // null until the first one arrives, and again after a restart.
+    this.termTitle = null;
   }
   getBackendKey() {
     const key = this.backendKey || this.plugin.pluginData.cliBackend || "claude";
@@ -6859,6 +6862,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     return VIEW_TYPE;
   }
   getDisplayText() {
+    // A title set by the CLI wins: Claude Code names the session (/rename or
+    // its own summary), so many tabs stop reading as identical "Claude" tabs.
+    if (this.termTitle) return this.termTitle;
     // activeBackendKey is pinned when the shell starts, so changing the default
     // later doesn't relabel a tab that's still running the old provider.
     const key = this.activeBackendKey || this.getBackendKey();
@@ -7713,6 +7719,14 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
       return true;
     });
+    // Mirror the terminal title (OSC 0/2) into the tab header. The sidebar
+    // shows it as the tab tooltip, a main-area tab as the tab text.
+    this.term.onTitleChange((title) => {
+      const next = (title || "").trim() || null;
+      if (next === this.termTitle) return;
+      this.termTitle = next;
+      this.leaf.updateHeader?.();
+    });
     this.term.onData((data) => {
       if (this.proc && !this.proc.killed) {
         // Filter out focus in/out sequences before sending to shell
@@ -7899,6 +7913,11 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   startShell(workingDir = null, yoloMode = false, continueSession = false) {
     this.stopShell();
+    // Drop the previous process's title; the new one sets its own.
+    if (this.termTitle) {
+      this.termTitle = null;
+      this.leaf.updateHeader?.();
+    }
     const cwd = this.plugin.resolveCwd(workingDir);
     // Persist last working directory for resume
     this.plugin.pluginData.lastCwd = cwd;
