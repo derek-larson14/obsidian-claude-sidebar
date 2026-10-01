@@ -7360,22 +7360,40 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.term?.writeln(`\r\n[Image paste error: ${err.message}]`);
     }
   }
-  // Last-resort image source, returns true if an image was pasted. On Wayland the
-  // clipboard is proxied through xdg-desktop-portal, which can drop or re-label image
-  // mime types, so the DOM `paste` event may carry no image/* item at all. The system
-  // clipboard still reports the image, so ask it directly.
-  async pasteImageFromClipboard() {
+  // The image in the system clipboard, as {format, data}, or null if there isn't a
+  // usable one. Deliberately synchronous: a caller handling a `paste` event has to
+  // preventDefault() before yielding, and readBuffer() is synchronous, so we can read
+  // the bytes and bail on them while the event is still dispatching. Adding `async`
+  // here would make every caller see a truthy Promise and block every paste.
+  //
+  // Every image/* format is tried rather than just the first one advertised, because
+  // on macOS availableFormats() lists "image/png" alongside the native "public.png"
+  // while the bytes only live under the native name — reading the MIME alias returns
+  // 0 bytes, and a caller that had already blocked the paste would end up swallowing
+  // it. Returning null lets the text flavour fall through instead.
+  //
+  // This is also the only reliable image source on Wayland, where the clipboard is
+  // proxied through xdg-desktop-portal and the event may carry no image/* item at all.
+  imageInClipboard() {
+    // macOS puts real images in the paste event itself. Asking the system clipboard there
+    // turns a Finder file copy into an image paste instead of the file path.
+    if (process.platform === "darwin") return null;
     try {
       const clipboard = require("electron").clipboard;
-      const format = clipboard.availableFormats().find((f) => f.startsWith("image/"));
-      if (!format) return false;
-      const data = clipboard.readBuffer(format);
-      if (!data || data.length === 0) return false;
-      await this.insertImageBlob(new Blob([data], { type: format }));
-      return true;
+      for (const format of clipboard.availableFormats()) {
+        if (!format.startsWith("image/")) continue;
+        const data = clipboard.readBuffer(format);
+        if (data && data.length > 0) return { format, data };
+      }
+      return null;
     } catch (_) {
-      return false;
+      return null;
     }
+  }
+  // Paste an image returned by imageInClipboard(). Separate from the lookup so the
+  // caller can block a paste event before yielding on the write.
+  async pasteImageFromClipboard(image) {
+    await this.insertImageBlob(new Blob([image.data], { type: image.format }));
   }
   applyFontSize(size) {
     if (!this.term) return;
@@ -7497,6 +7515,20 @@ var TerminalView = class extends import_obsidian.ItemView {
       // Only handle if terminal has focus
       if (!this.containerEl.contains(document.activeElement)) return;
       const items = e.clipboardData?.items;
+      // A file copied in Finder or Explorer arrives as a file item backed by a real path.
+      // Type that path, like a drag-and-drop, instead of copying the bytes to a temp file
+      // (images) or letting the terminal paste the bare filename (everything else).
+      const { webUtils } = require("electron");
+      const paths = [...(items || [])]
+        .filter((item) => item.kind === "file")
+        .map((item) => { try { return webUtils.getPathForFile(item.getAsFile()); } catch (_) { return ""; } })
+        .filter(Boolean);
+      if (paths.length) {
+        e.preventDefault();
+        e.stopPropagation();
+        for (const p of paths) this.proc?.stdin?.write(`"${this.plugin.getPath(p)}" `);
+        return;
+      }
       for (const item of items || []) {
         if (item.type.startsWith("image/")) {
           e.preventDefault();
@@ -7507,9 +7539,14 @@ var TerminalView = class extends import_obsidian.ItemView {
         }
       }
       // No image in the event data (typical on Wayland) - ask the system clipboard.
-      if (await this.pasteImageFromClipboard()) {
+      // Read synchronously and block only when there are actual bytes: awaiting first
+      // would let the event finish dispatching, and xterm would paste the text/plain
+      // flavour of a clipboard that holds both text and an image.
+      const image = this.imageInClipboard();
+      if (image) {
         e.preventDefault();
         e.stopPropagation();
+        await this.pasteImageFromClipboard(image);
       }
     };
     document.addEventListener("paste", this.imagePasteHandler, true);
@@ -7587,7 +7624,10 @@ var TerminalView = class extends import_obsidian.ItemView {
         try { text = require("electron").clipboard.readText() || ""; }
         catch (_) { text = (await navigator.clipboard?.readText?.().catch(() => "")) || ""; }
         if (text) this.term?.paste(text);
-        else await this.pasteImageFromClipboard();
+        else {
+          const image = this.imageInClipboard();
+          if (image) await this.pasteImageFromClipboard(image);
+        }
       }));
       menu.showAtMouseEvent(e);
     };
@@ -7707,11 +7747,12 @@ var TerminalView = class extends import_obsidian.ItemView {
             // No text, so the clipboard may hold an image. preventDefault() above suppresses
             // the `paste` event, so imagePasteHandler never runs - read the image from the
             // system clipboard instead, which is the only image source on Wayland.
-            this.pasteImageFromClipboard().then((pasted) => {
-              if (!pasted) {
-                navigator.clipboard?.readText?.().then((t) => { if (t) this.term.paste(t); }).catch(() => {});
-              }
-            });
+            const image = this.imageInClipboard();
+            if (image) {
+              this.pasteImageFromClipboard(image);
+            } else {
+              navigator.clipboard?.readText?.().then((t) => { if (t) this.term.paste(t); }).catch(() => {});
+            }
           }
           return false;
         }
