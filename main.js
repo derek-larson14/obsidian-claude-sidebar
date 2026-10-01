@@ -7007,6 +7007,44 @@ var CLI_BACKENDS = {
 var RENAMED_BACKENDS = {
   gemini: "antigravity",
 };
+// "Additional CLIs" setting: one executable name or path per line, e.g. a
+// wrapper script. The name is spliced into `shell -lc`, so it can't contain
+// spaces or shell syntax. Arguments belong in that provider's flags box.
+var CUSTOM_CLI_PATTERN = /^[A-Za-z0-9~\/][A-Za-z0-9._~\/\\:-]*$/;
+function parseCustomClis(text) {
+  const builtIn = new Set([
+    ...Object.keys(CLI_BACKENDS),
+    ...Object.values(CLI_BACKENDS).map((b) => b.binary),
+    ...Object.keys(RENAMED_BACKENDS),
+  ]);
+  const backends = {};
+  const rejected = [];
+  for (const raw of (text || "").split("\n")) {
+    const name = raw.trim();
+    if (!name || name.startsWith("#")) continue;
+    let reason = null;
+    if (!CUSTOM_CLI_PATTERN.test(name)) reason = "use letters, digits, and . _ - / ~ only, no spaces";
+    else if (builtIn.has(name)) reason = "already built in";
+    else if (name in Object.prototype) reason = "reserved name";
+    else if (backends[name]) reason = "listed twice";
+    if (reason) {
+      rejected.push({ name, reason });
+      continue;
+    }
+    const short = name.split(/[\\/]/).pop() || name;
+    backends[name] = {
+      label: name,
+      short,
+      binary: name,
+      pathHints: [],
+      yoloFlag: null,
+      resumeFlag: null,
+      resumeIsSubcommand: false,
+      custom: true,
+    };
+  }
+  return { backends, rejected };
+}
 function findCliBinary(binary, pathStr, extraDirs) {
   const dirs = [];
   if (pathStr) dirs.push(...pathStr.split(path.delimiter));
@@ -7016,6 +7054,18 @@ function findCliBinary(binary, pathStr, extraDirs) {
   const names = process.platform === "win32"
     ? [binary, `${binary}.exe`, `${binary}.cmd`, `${binary}.bat`]
     : [binary];
+  // A custom CLI can be a path (/usr/local/bin/my-agent, ~/bin/my-agent).
+  // Check it where it is instead of joining it onto every PATH entry.
+  if (/[\\/]/.test(binary)) {
+    const home = require("os").homedir();
+    for (const name of names) {
+      const candidate = name.startsWith("~") ? path.join(home, name.slice(1)) : name;
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      } catch (_) {}
+    }
+    return null;
+  }
   for (const dir of dirs) {
     if (!dir) continue;
     for (const name of names) {
@@ -7072,10 +7122,10 @@ var TerminalView = class extends import_obsidian.ItemView {
   }
   getBackendKey() {
     const key = this.backendKey || this.plugin.pluginData.cliBackend || "claude";
-    return CLI_BACKENDS[key] ? key : "claude";
+    return this.plugin.getBackends()[key] ? key : "claude";
   }
   getBackend() {
-    return CLI_BACKENDS[this.getBackendKey()];
+    return this.plugin.getBackends()[this.getBackendKey()];
   }
   getViewType() {
     return VIEW_TYPE;
@@ -7087,7 +7137,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     // activeBackendKey is pinned when the shell starts, so changing the default
     // later doesn't relabel a tab that's still running the old provider.
     const key = this.activeBackendKey || this.getBackendKey();
-    const backend = CLI_BACKENDS[key] || CLI_BACKENDS.claude;
+    const backend = this.plugin.getBackends()[key] || CLI_BACKENDS.claude;
     const name = backend.short || backend.label;
     const dir = this.plugin.resolveCwd(this.workingDir);
     const folder = dir ? path.basename(dir) : "";
@@ -7110,7 +7160,7 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     if (state?.backendKey) {
       const key = RENAMED_BACKENDS[state.backendKey] || state.backendKey;
-      if (CLI_BACKENDS[key]) this.backendKey = key;
+      if (this.plugin.getBackends()[key]) this.backendKey = key;
     }
     // If shell already started, restart with new settings
     if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession || state?.backendKey)) {
@@ -8301,7 +8351,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       }
     }
     const backendKey = this.getBackendKey();
-    const backend = CLI_BACKENDS[backendKey];
+    const backend = this.plugin.getBackends()[backendKey];
     this.activeBackendKey = backendKey;
     let cliCmd = backend.binary;
     if (yoloMode && backend.yoloFlag) cliCmd += " " + backend.yoloFlag;
@@ -8584,7 +8634,7 @@ var CliProviderSwitchModal = class extends import_obsidian.SuggestModal {
         .sort(([a], [b]) => (b === currentKey) - (a === currentKey));
     } else {
       this.setPlaceholder(mode === "once" ? "Open a tab with…" : "Switch default CLI provider…");
-      this.backends = Object.entries(CLI_BACKENDS);
+      this.backends = Object.entries(plugin.getBackends());
     }
   }
   getSuggestions(query) {
@@ -8695,12 +8745,12 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     const currentBackendKey = this.plugin.pluginData.cliBackend || "claude";
-    const currentBackend = CLI_BACKENDS[currentBackendKey] || CLI_BACKENDS.claude;
+    const currentBackend = this.plugin.getBackends()[currentBackendKey] || CLI_BACKENDS.claude;
     new import_obsidian.Setting(containerEl)
       .setName("CLI backend")
       .setDesc("Which coding agent CLI to run in the sidebar.")
       .addDropdown(drop => {
-        for (const [key, backend] of Object.entries(CLI_BACKENDS)) {
+        for (const [key, backend] of Object.entries(this.plugin.getBackends())) {
           drop.addOption(key, backend.label);
         }
         drop.setValue(currentBackendKey);
@@ -8711,6 +8761,36 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
           this.display();
         });
       });
+    const { rejected } = parseCustomClis(this.plugin.pluginData.customClis);
+    const customSetting = new import_obsidian.Setting(containerEl)
+      .setName("Additional CLIs")
+      .setDesc("One command per line, such as a wrapper script on your PATH or a full path. Each one shows up as a provider above, with its own CLI flags.")
+      .addTextArea(text => {
+        const grow = () => {
+          text.inputEl.style.height = "auto";
+          text.inputEl.style.height = text.inputEl.scrollHeight + "px";
+        };
+        text
+          .setPlaceholder("my-agent")
+          .setValue(this.plugin.pluginData.customClis || "")
+          .onChange(async (value) => {
+            this.plugin.pluginData.customClis = value;
+            grow();
+            await this.plugin.saveData(this.plugin.pluginData);
+          });
+        text.inputEl.rows = 2;
+        setTimeout(grow, 0);
+        // Rebuild on blur, not per keystroke, so the provider dropdown picks
+        // up new entries without stealing focus mid-word.
+        text.inputEl.addEventListener("blur", () => this.display());
+      });
+    customSetting.settingEl.addClass("claude-sidebar-env-setting");
+    if (rejected.length) {
+      customSetting.descEl.createDiv({
+        cls: "mod-warning",
+        text: "Skipped: " + rejected.map((r) => `${r.name} (${r.reason})`).join(", "),
+      });
+    }
     if (process.platform === "win32") {
       new import_obsidian.Setting(containerEl)
         .setName("Shell")
@@ -9222,8 +9302,18 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     await this.createNewTab();
   }
+  // Built-in providers plus the user's Additional CLIs. Reparsed only when
+  // the setting text changes.
+  getBackends() {
+    const text = this.pluginData.customClis || "";
+    if (this._backendsText !== text || !this._backends) {
+      this._backendsText = text;
+      this._backends = { ...CLI_BACKENDS, ...parseCustomClis(text).backends };
+    }
+    return this._backends;
+  }
   getDefaultBackend() {
-    return CLI_BACKENDS[this.pluginData.cliBackend] || CLI_BACKENDS.claude;
+    return this.getBackends()[this.pluginData.cliBackend] || CLI_BACKENDS.claude;
   }
   // Labels built at display time (ribbon, context menus) name the actual
   // provider. Command names can't — they're registered once at load — so those
@@ -9267,16 +9357,16 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     // WSL's PATH is inside the distro. A Windows filesystem probe would hide
     // CLIs the launcher will actually run.
     if (this.resolveShell().kind === "wsl") {
-      return Object.entries(CLI_BACKENDS);
+      return Object.entries(this.getBackends());
     }
     const homeDir = require("os").homedir();
     const pathStr = this.resolveUserPath();
-    const found = Object.entries(CLI_BACKENDS).filter(([, backend]) => {
+    const found = Object.entries(this.getBackends()).filter(([, backend]) => {
       const hints = (backend.pathHints || []).map((h) => h.replace("~", homeDir));
       return !!findCliBinary(backend.binary, pathStr, hints);
     });
     // If detection comes up short, offer everything rather than nothing.
-    return found.length ? found : Object.entries(CLI_BACKENDS);
+    return found.length ? found : Object.entries(this.getBackends());
   }
   tildePath(dir) {
     const home = require("os").homedir();
