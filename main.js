@@ -7851,14 +7851,31 @@ var TerminalView = class extends import_obsidian.ItemView {
         const sel = this.term?.getSelection();
         if (sel) { try { require("electron").clipboard.writeText(sel, "selection"); } catch (_) {} }
       });
+      // Paste on mouseup, not auxclick. Chromium fires auxclick at the nearest common
+      // ancestor of the mousedown and mouseup targets, and the DOM renderer rebuilds every
+      // row it refreshes, so a span pressed during a CLI redraw is detached by the release:
+      // mouseup still reaches the host, auxclick never fires. Each middle press arms one
+      // mouseup listener on the host's OWN window (a popped-out terminal never reports to
+      // the main window), and the release pastes when it lands inside the host.
+      // preventDefault on every armed release, inside or not, stops Chromium's own middle-click
+      // paste into the focused textarea: a drag out of the terminal pastes nothing.
       this.termMiddleClickHandler = (e) => {
-        if (e.button !== 1) return; // middle button only
+        if (e.button !== 1) return; // middle button only; other buttons keep the press armed
+        this.termMiddleUpWin?.removeEventListener("mouseup", this.termMiddleClickHandler);
+        this.termMiddleUpWin = null;
         e.preventDefault();
+        if (!this.termHost?.contains(e.target)) return;
         let text = "";
         try { text = require("electron").clipboard.readText("selection") || ""; } catch (_) {}
         if (text) this.term?.paste(text);
       };
-      this.termHost.addEventListener("auxclick", this.termMiddleClickHandler);
+      this.termMiddleDownHandler = (e) => {
+        if (e.button !== 1) return;
+        this.termMiddleUpWin?.removeEventListener("mouseup", this.termMiddleClickHandler);
+        this.termMiddleUpWin = this.termHost?.ownerDocument?.defaultView || window;
+        this.termMiddleUpWin.addEventListener("mouseup", this.termMiddleClickHandler);
+      };
+      this.termHost.addEventListener("mousedown", this.termMiddleDownHandler);
     }
     const isMac = process.platform === 'darwin';
     // Keys the terminal must keep regardless of Obsidian bindings.
@@ -8507,7 +8524,10 @@ var TerminalView = class extends import_obsidian.ItemView {
       this.termContextMenuHandler = null;
     }
     if (this.termMiddleClickHandler && this.termHost) {
-      this.termHost.removeEventListener("auxclick", this.termMiddleClickHandler);
+      this.termHost.removeEventListener("mousedown", this.termMiddleDownHandler);
+      this.termMiddleUpWin?.removeEventListener("mouseup", this.termMiddleClickHandler);
+      this.termMiddleUpWin = null;
+      this.termMiddleDownHandler = null;
       this.termMiddleClickHandler = null;
     }
     if (this.termPrimarySelectionSub) {
