@@ -8748,7 +8748,7 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
     const { rejected } = parseCustomClis(this.plugin.pluginData.customClis);
     const customSetting = new import_obsidian.Setting(containerEl)
       .setName("Additional CLIs")
-      .setDesc("One command per line, such as a wrapper script on your PATH or a full path. Each one shows up as a provider above, with its own CLI flags.")
+      .setDesc("One command per line. Each one becomes a provider above.")
       .addTextArea(text => {
         const grow = () => {
           text.inputEl.style.height = "auto";
