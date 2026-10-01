@@ -6956,24 +6956,6 @@ var CLI_BACKENDS = {
     resumeFlag: "--continue",
     resumeIsSubcommand: false,
   },
-  antigravity: {
-    label: "Antigravity CLI",
-    short: "Antigravity",
-    binary: "agy",
-    pathHints: ["~/.local/bin"],
-    yoloFlag: "--dangerously-skip-permissions",
-    resumeFlag: "--continue",
-    resumeIsSubcommand: false,
-  },
-  kimi: {
-    label: "Kimi Code",
-    short: "Kimi",
-    binary: "kimi",
-    pathHints: [],
-    yoloFlag: "--yolo",
-    resumeFlag: "--continue",
-    resumeIsSubcommand: false,
-  },
   copilot: {
     label: "GitHub Copilot CLI",
     short: "Copilot",
@@ -7002,10 +6984,12 @@ var CLI_BACKENDS = {
     resumeIsSubcommand: false,
   },
 };
-// Providers that were replaced by a successor CLI. A saved selection is remapped
-// on load so it doesn't silently fall back to Claude Code via getBackendKey().
+// Old provider keys. A saved selection or tab is remapped on load so it doesn't
+// silently fall back to Claude Code via getBackendKey(). Antigravity (which had
+// replaced Gemini CLI) is now an Additional CLI, keyed by its command.
 var RENAMED_BACKENDS = {
-  gemini: "antigravity",
+  gemini: "agy",
+  antigravity: "agy",
 };
 // "Additional CLIs" setting: one executable name or path per line, e.g. a
 // wrapper script. The name is spliced into `shell -lc`, so it can't contain
@@ -8822,9 +8806,9 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
     const flagsByProvider = this.plugin.pluginData.flagsByProvider;
     new import_obsidian.Setting(containerEl)
       .setName(`CLI flags (${currentBackend.label})`)
-      .setDesc("Flags appended to every session for this provider only. Switch the dropdown above to edit flags for another provider.")
+      .setDesc("Flags appended to every session for this provider only.")
       .addText(text => text
-        .setPlaceholder("--model claude-opus-4-6")
+        .setPlaceholder("--flag value")
         .setValue(flagsByProvider[currentBackendKey] || "")
         .onChange(async (value) => {
           const trimmed = value.trim();
@@ -8857,7 +8841,7 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
     envSetting.settingEl.addClass("claude-sidebar-env-setting");
     new import_obsidian.Setting(containerEl)
       .setName("Terminal font size")
-      .setDesc("Size of the terminal text in pixels (6–32). Default is 13. Applies to open tabs immediately.")
+      .setDesc("Size of the terminal text in pixels (6–32). Default is 13.")
       .addText(text => {
         text.inputEl.type = "number";
         text.inputEl.min = "6";
@@ -8918,6 +8902,24 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       this.pluginData.cliBackend = renamedBackend;
       await this.saveData(this.pluginData);
     }
+    // Kimi Code and Antigravity CLI left the built-in list. Anyone who used one
+    // gets its command as an Additional CLI, so their default, saved tabs, and
+    // flags keep working.
+    const flags = this.pluginData.flagsByProvider;
+    let migrated = false;
+    if (flags?.antigravity && !flags.agy) {
+      flags.agy = flags.antigravity;
+      delete flags.antigravity;
+      migrated = true;
+    }
+    const listed = (this.pluginData.customClis || "").split("\n").map((l) => l.trim());
+    const retired = ["kimi", "agy"].filter((cmd) =>
+      !listed.includes(cmd) && (this.pluginData.cliBackend === cmd || flags?.[cmd]));
+    if (retired.length) {
+      this.pluginData.customClis = [...listed.filter(Boolean), ...retired].join("\n");
+      migrated = true;
+    }
+    if (migrated) await this.saveData(this.pluginData);
     this.lastActiveTerminalLeaf = null;
     this.layoutReady = false;
     this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
