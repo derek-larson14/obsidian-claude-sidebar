@@ -96,7 +96,7 @@ These files aren't installed in your vault. They're embedded as base64 in `main.
 
 The maintainer reads every issue and PR himself, then has his own agent dig into the code. Write the top for him and put everything else underneath for the agent.
 
-**Top: plain language, no narration of code internals.** Get the essence across as briefly as you can without leaving out anything the maintainer needs to look at.
+**Top: plain language, no narration of code internals.** Get the essence across as briefly as you can without leaving out anything essential.
 - **Problem:** what the user sees, in one or two sentences.
 - **Change** (PRs): what this PR does.
 - **Tradeoffs:** what it costs or could break: file size, behavior that changes for every user, platforms not covered, ongoing maintenance. "None" is rarely true.
