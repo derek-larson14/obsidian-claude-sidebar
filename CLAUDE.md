@@ -50,6 +50,8 @@ If you don't have a fix, open an issue at https://github.com/derek-larson14/obsi
 - What you expected
 - Steps to reproduce (numbered, exact)
 
+Write it up as described in **Writing it up** below.
+
 ## Step 2b: Open a PR
 
 The fast loop: edit `main.js` in your vault, reload Obsidian (`Cmd-R` on Mac, `Ctrl-R` on Windows/Linux), confirm the fix, copy to a fork, open a PR against `main` (the agent can help with much of this).
@@ -92,10 +94,34 @@ These files aren't installed in your vault. They're embedded as base64 in `main.
 - **Make ONE change at a time.**
 - **Don't bump `manifest.json`.**
 - **Test the surface you touched, plus one nearby.**
-- **In the PR description, include:**
-  - What was wrong
-  - What you changed
-  - What you tested it on (which OS, which CLI backend)
+- **Write the description as described in Writing it up, below.**
+
+## Writing it up (issues and PRs)
+
+The maintainer reads every issue and PR himself, then has his own agent dig into the code. Write the top for him and put everything else underneath for the agent.
+
+**Top: about 150 words, plain language, no narration of code internals.**
+- **Problem:** what the user sees, in one or two sentences.
+- **Change** (PRs): what this PR does.
+- **Tradeoffs:** what it costs or could break: file size, behavior that changes for every user, platforms not covered, ongoing maintenance. "None" is rarely true.
+- **Tested:** test everything you can, including anything your agent can run itself. Then list the OS, Obsidian version, CLI backend, and surfaces (sidebar, main-area tab, popout), and say what you couldn't test.
+- **Try it:** the fastest way to see the bug or the fix: a command to paste, or numbered steps.
+
+For an issue without a fix, the top is what happened, what you expected, numbered steps, and the diagnostic block from Step 1.
+
+**Details: everything else, collapsed.** Root cause, how you found it, measurements, line references, and the alternatives you considered and why you rejected them.
+
+```
+<details><summary>Details</summary>
+
+...
+
+</details>
+```
+
+Keep it to one write-up. If you learn more, edit the description instead of adding a long comment.
+
+Before posting, reread the top as the maintainer: could he decide in a minute without opening Details?
 
 ## Things we like to see:
 
