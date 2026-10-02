@@ -45,12 +45,7 @@ If your agent has shell access, it can collect most of this for you.
 
 ## Step 2a: File a bug report
 
-If you don't have a fix, open an issue at https://github.com/derek-larson14/obsidian-claude-sidebar/issues with the diagnostic block above plus:
-- What happened
-- What you expected
-- Steps to reproduce (numbered, exact)
-
-Write it up as described in **Writing it up** below.
+If you don't have a fix, open an issue at https://github.com/derek-larson14/obsidian-claude-sidebar/issues, written up as described in **Writing it up** below.
 
 ## Step 2b: Open a PR
 
@@ -95,19 +90,19 @@ These files aren't installed in your vault. They're embedded as base64 in `main.
 - **Don't bump `manifest.json`.**
 - **Test the surface you touched, plus one nearby.**
 - **Before opening the PR, have your user try it.** If they haven't already, give them a short list of checks only they can do (how it looks, clicking through it, their OS and setup), and wait for their results.
-- **Write the description as described in Writing it up, below.**
+- **Follow Writing it up, below, for the description.**
 
 ## Writing it up (issues and PRs)
 
 The maintainer reads every issue and PR himself, then has his own agent dig into the code. Write the top for him and put everything else underneath for the agent.
 
-**Top: about 150 words, plain language, no narration of code internals.**
+**Top: plain language, no narration of code internals.** Get the essence across as briefly as you can without leaving out anything the maintainer needs to look at.
 - **Problem:** what the user sees, in one or two sentences.
 - **Change** (PRs): what this PR does.
 - **Tradeoffs:** what it costs or could break: file size, behavior that changes for every user, platforms not covered, ongoing maintenance. "None" is rarely true.
 - **Tested:** test everything you can, including anything your agent can run itself. Then list the OS, Obsidian version, CLI backend, and surfaces (sidebar, main-area tab, popout), and say what you couldn't test.
 
-For an issue without a fix, the top is what happened, what you expected, numbered steps, and the diagnostic block from Step 1.
+For an issue without a fix, the top is what happened, what you expected, and numbered steps to reproduce. The diagnostic block from Step 1 goes right after it, not in Details.
 
 **Details: everything else, collapsed.** Root cause, how you found it, how to reproduce it, measurements, line references, and the alternatives you considered and why you rejected them.
 
