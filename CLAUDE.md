@@ -94,6 +94,7 @@ These files aren't installed in your vault. They're embedded as base64 in `main.
 - **Make ONE change at a time.**
 - **Don't bump `manifest.json`.**
 - **Test the surface you touched, plus one nearby.**
+- **Before opening the PR, have your user try it.** If they haven't already, give them a short list of checks only they can do (how it looks, clicking through it, their OS and setup), and wait for their results.
 - **Write the description as described in Writing it up, below.**
 
 ## Writing it up (issues and PRs)
@@ -105,11 +106,10 @@ The maintainer reads every issue and PR himself, then has his own agent dig into
 - **Change** (PRs): what this PR does.
 - **Tradeoffs:** what it costs or could break: file size, behavior that changes for every user, platforms not covered, ongoing maintenance. "None" is rarely true.
 - **Tested:** test everything you can, including anything your agent can run itself. Then list the OS, Obsidian version, CLI backend, and surfaces (sidebar, main-area tab, popout), and say what you couldn't test.
-- **Try it:** the fastest way to see the bug or the fix: a command to paste, or numbered steps.
 
 For an issue without a fix, the top is what happened, what you expected, numbered steps, and the diagnostic block from Step 1.
 
-**Details: everything else, collapsed.** Root cause, how you found it, measurements, line references, and the alternatives you considered and why you rejected them.
+**Details: everything else, collapsed.** Root cause, how you found it, how to reproduce it, measurements, line references, and the alternatives you considered and why you rejected them.
 
 ```
 <details><summary>Details</summary>
