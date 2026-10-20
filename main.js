@@ -8168,6 +8168,12 @@ var TerminalView = class extends import_obsidian.ItemView {
   // Open a vault file in a new tab, or focus its tab if it is already open. Never replaces
   // the note in an existing tab (the user may not be looking at it) or the terminal leaf.
   async openVaultFile(file) {
+    // Obsidian hands a file it can't display (.sh, .py, .exe, ...) to the OS, which offers to
+    // run it. Reveal it in Finder / Explorer / the file manager instead.
+    if (this.app.viewRegistry?.isExtensionRegistered && !this.app.viewRegistry.isExtensionRegistered(file.extension)) {
+      this.app.showInFolder(file.path);
+      return;
+    }
     // Any file view (markdown, image, PDF, ...), not sidebar panes like outline or backlinks.
     let already = null;
     this.app.workspace.iterateAllLeaves((l) => {
