@@ -7688,7 +7688,10 @@ var TerminalView = class extends import_obsidian.ItemView {
       scrollback: 10000,
       minimumContrastRatio: 4.5,
       macOptionIsMeta: false,
-      allowProposedApi: true // term.unicode is a proposed API
+      allowProposedApi: true, // term.unicode is a proposed API
+      // OSC 8 hyperlinks (FORCE_HYPERLINK in startShell). The CLI marks the whole URL, so
+      // every row of a wrapped link opens all of it. Without a handler xterm shows confirm().
+      linkHandler: { activate: (e, url) => this.openWebLink(e, url) }
     });
     this.fitAddon = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fitAddon);
@@ -7717,6 +7720,45 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
+    // xterm's OSC 8 provider ranges a link one row at a time, so hovering half of a wrapped
+    // URL underlines only that half. Wrap it to join rows where the same URL runs from the
+    // end of one row's text to the start of the next. Private API: if it moves, links
+    // still work row by row.
+    const linkService = this.term._core?._linkProviderService;
+    const oscProvider = linkService?.linkProviders?.[0];
+    if (oscProvider && typeof oscProvider.provideLinks === "function") {
+      const rowLinks = (y) => new Promise((resolve) => oscProvider.provideLinks(y, (l) => resolve(l || [])));
+      // 1-based first and last cells with text on row y (0 if empty).
+      const textEdge = (y, fromEnd) => {
+        const line = this.term?.buffer.active.getLine(y - 1);
+        if (!line) return 0;
+        for (let i = 0; i < line.length; i++) {
+          const x = fromEnd ? line.length - 1 - i : i;
+          if (line.getCell(x)?.getChars().trim()) return x + 1;
+        }
+        return 0;
+      };
+      linkService.linkProviders[0] = {
+        provideLinks: async (y, callback) => {
+          const links = await rowLinks(y);
+          for (const link of links) {
+            let { start, end } = link.range;
+            while (start.y > 1 && start.x === textEdge(start.y, false)) {
+              const up = (await rowLinks(start.y - 1)).find((l) => l.text === link.text && l.range.end.x === textEdge(start.y - 1, true));
+              if (!up) break;
+              start = up.range.start;
+            }
+            while (end.x === textEdge(end.y, true)) {
+              const down = (await rowLinks(end.y + 1)).find((l) => l.text === link.text && l.range.start.x === textEdge(end.y + 1, false));
+              if (!down) break;
+              end = down.range.end;
+            }
+            link.range = { start, end };
+          }
+          callback(links.length ? links : void 0);
+        }
+      };
+    }
     // Make vault-relative file paths in the output clickable (open the note in Obsidian).
     // xterm calls provideLinks lazily, per-line, only when the mouse hovers that row — no
     // cost during output. We only link a path that resolves to a real file in the vault,
@@ -7742,6 +7784,20 @@ var TerminalView = class extends import_obsidian.ItemView {
           });
           return true;
         };
+        // 0) Wiki links: [[Note]], [[Note#Heading]], [[Note|alias]]. Linked only when the
+        //    note exists, so code like arr[[0]] stays plain. Pushed first, so a path match
+        //    inside the brackets ([[Note.md]]) never wins the click.
+        const reWiki = /\[\[([^\[\]|#^\r\n]+)[^\[\]\r\n]*\]\]/g;
+        let w;
+        while ((w = reWiki.exec(text)) !== null) {
+          const file = this.resolveVaultPath(w[1].trim());
+          if (!file) continue;
+          links.push({
+            text: w[0],
+            range: { start: { x: w.index + 1, y }, end: { x: w.index + w[0].length, y } },
+            activate: () => this.openVaultFile(file)
+          });
+        }
         // 1) Backtick-wrapped paths — explicit delimiters, so spaces inside are unambiguous.
         const reBacktick = /`([^`\r\n]*?\.\w+)`/g;
         let b;
@@ -7793,18 +7849,7 @@ var TerminalView = class extends import_obsidian.ItemView {
           links.push({
             text: url,
             range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } },
-            activate: (e) => {
-              // When the CLI tracks the mouse, xterm also reports this click to it. Claude
-              // Code opens a link on Ctrl+click, so opening it here too gives two tabs.
-              // A click that forces selection (Shift, or Option on Mac when enabled) is not
-              // reported, so open that one here.
-              const forced = process.platform === "darwin"
-                ? !!e?.altKey && !!this.term?.options.macOptionClickForcesSelection
-                : !!e?.shiftKey;
-              if (this.term?.modes.mouseTrackingMode !== "none" && !!e?.ctrlKey && !forced) return;
-              try { require("electron").shell.openExternal(url); }
-              catch (_) { window.open(url, "_blank"); }
-            }
+            activate: (e) => this.openWebLink(e, url)
           });
         }
         callback(links.length ? links : void 0);
@@ -8154,6 +8199,18 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Snippet toggled or edited: pick up a new line height
     this.registerEvent(this.app.workspace.on("css-change", () => this.applyLineHeight()));
   }
+  openWebLink(e, url) {
+    // When the CLI tracks the mouse, xterm also reports this click to it. Claude
+    // Code opens a link on Ctrl+click, so opening it here too gives two tabs.
+    // A click that forces selection (Shift, or Option on Mac when enabled) is not
+    // reported, so open that one here.
+    const forced = process.platform === "darwin"
+      ? !!e?.altKey && !!this.term?.options.macOptionClickForcesSelection
+      : !!e?.shiftKey;
+    if (this.term?.modes.mouseTrackingMode !== "none" && !!e?.ctrlKey && !forced) return;
+    try { require("electron").shell.openExternal(url); }
+    catch (_) { window.open(url, "_blank"); }
+  }
   // Resolve a candidate string to a real vault file, or null. Absolute/home paths and
   // URLs are skipped. Falls back to basename linkpath resolution (e.g. a bare note name).
   resolveVaultPath(candidate) {
@@ -8390,7 +8447,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
-    let shellEnv = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+    // FORCE_HYPERLINK: CLIs that use supports-hyperlinks (Claude Code) mark URLs with
+    // OSC 8, which survives their own line wrapping. An inherited value wins.
+    let shellEnv = { FORCE_HYPERLINK: "1", ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
     const homeDir = process.env.HOME || process.env.USERPROFILE || "";
     const pathHints = (backend.pathHints || []).map(p => p.replace("~", homeDir));
     if (isWindows) {
