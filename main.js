@@ -7688,7 +7688,10 @@ var TerminalView = class extends import_obsidian.ItemView {
       scrollback: 10000,
       minimumContrastRatio: 4.5,
       macOptionIsMeta: false,
-      allowProposedApi: true // term.unicode is a proposed API
+      allowProposedApi: true, // term.unicode is a proposed API
+      // OSC 8 hyperlinks (FORCE_HYPERLINK in startShell). The CLI marks the whole URL, so
+      // every row of a wrapped link opens all of it. Without a handler xterm shows confirm().
+      linkHandler: { activate: (e, url) => this.openWebLink(e, url) }
     });
     this.fitAddon = new import_addon_fit.FitAddon();
     this.term.loadAddon(this.fitAddon);
@@ -7793,18 +7796,7 @@ var TerminalView = class extends import_obsidian.ItemView {
           links.push({
             text: url,
             range: { start: { x: m.index + 1, y }, end: { x: m.index + url.length, y } },
-            activate: (e) => {
-              // When the CLI tracks the mouse, xterm also reports this click to it. Claude
-              // Code opens a link on Ctrl+click, so opening it here too gives two tabs.
-              // A click that forces selection (Shift, or Option on Mac when enabled) is not
-              // reported, so open that one here.
-              const forced = process.platform === "darwin"
-                ? !!e?.altKey && !!this.term?.options.macOptionClickForcesSelection
-                : !!e?.shiftKey;
-              if (this.term?.modes.mouseTrackingMode !== "none" && !!e?.ctrlKey && !forced) return;
-              try { require("electron").shell.openExternal(url); }
-              catch (_) { window.open(url, "_blank"); }
-            }
+            activate: (e) => this.openWebLink(e, url)
           });
         }
         callback(links.length ? links : void 0);
@@ -8154,6 +8146,18 @@ var TerminalView = class extends import_obsidian.ItemView {
     // Snippet toggled or edited: pick up a new line height
     this.registerEvent(this.app.workspace.on("css-change", () => this.applyLineHeight()));
   }
+  openWebLink(e, url) {
+    // When the CLI tracks the mouse, xterm also reports this click to it. Claude
+    // Code opens a link on Ctrl+click, so opening it here too gives two tabs.
+    // A click that forces selection (Shift, or Option on Mac when enabled) is not
+    // reported, so open that one here.
+    const forced = process.platform === "darwin"
+      ? !!e?.altKey && !!this.term?.options.macOptionClickForcesSelection
+      : !!e?.shiftKey;
+    if (this.term?.modes.mouseTrackingMode !== "none" && !!e?.ctrlKey && !forced) return;
+    try { require("electron").shell.openExternal(url); }
+    catch (_) { window.open(url, "_blank"); }
+  }
   // Resolve a candidate string to a real vault file, or null. Absolute/home paths and
   // URLs are skipped. Falls back to basename linkpath resolution (e.g. a bare note name).
   resolveVaultPath(candidate) {
@@ -8390,7 +8394,9 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
 
     // Get PATH from user's login shell (GUI apps don't inherit shell config)
-    let shellEnv = { ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
+    // FORCE_HYPERLINK: CLIs that use supports-hyperlinks (Claude Code) mark URLs with
+    // OSC 8, which survives their own line wrapping. An inherited value wins.
+    let shellEnv = { FORCE_HYPERLINK: "1", ...process.env, TERM: "xterm-256color", COLORTERM: "truecolor" };
     const homeDir = process.env.HOME || process.env.USERPROFILE || "";
     const pathHints = (backend.pathHints || []).map(p => p.replace("~", homeDir));
     if (isWindows) {
