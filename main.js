@@ -7745,6 +7745,20 @@ var TerminalView = class extends import_obsidian.ItemView {
           });
           return true;
         };
+        // 0) Wiki links: [[Note]], [[Note#Heading]], [[Note|alias]]. Linked only when the
+        //    note exists, so code like arr[[0]] stays plain. Pushed first, so a path match
+        //    inside the brackets ([[Note.md]]) never wins the click.
+        const reWiki = /\[\[([^\[\]|#^\r\n]+)[^\[\]\r\n]*\]\]/g;
+        let w;
+        while ((w = reWiki.exec(text)) !== null) {
+          const file = this.resolveVaultPath(w[1].trim());
+          if (!file) continue;
+          links.push({
+            text: w[0],
+            range: { start: { x: w.index + 1, y }, end: { x: w.index + w[0].length, y } },
+            activate: () => this.openVaultFile(file)
+          });
+        }
         // 1) Backtick-wrapped paths — explicit delimiters, so spaces inside are unambiguous.
         const reBacktick = /`([^`\r\n]*?\.\w+)`/g;
         let b;
