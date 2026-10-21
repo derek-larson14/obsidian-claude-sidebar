@@ -7720,6 +7720,45 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     this.term.parser?.registerCsiHandler({ final: "I" }, () => true);
     this.term.parser?.registerCsiHandler({ final: "O" }, () => true);
+    // xterm's OSC 8 provider ranges a link one row at a time, so hovering half of a wrapped
+    // URL underlines only that half. Wrap it to join rows where the same URL runs from the
+    // end of one row's text to the start of the next. Private API: if it moves, links
+    // still work row by row.
+    const linkService = this.term._core?._linkProviderService;
+    const oscProvider = linkService?.linkProviders?.[0];
+    if (oscProvider && typeof oscProvider.provideLinks === "function") {
+      const rowLinks = (y) => new Promise((resolve) => oscProvider.provideLinks(y, (l) => resolve(l || [])));
+      // 1-based first and last cells with text on row y (0 if empty).
+      const textEdge = (y, fromEnd) => {
+        const line = this.term?.buffer.active.getLine(y - 1);
+        if (!line) return 0;
+        for (let i = 0; i < line.length; i++) {
+          const x = fromEnd ? line.length - 1 - i : i;
+          if (line.getCell(x)?.getChars().trim()) return x + 1;
+        }
+        return 0;
+      };
+      linkService.linkProviders[0] = {
+        provideLinks: async (y, callback) => {
+          const links = await rowLinks(y);
+          for (const link of links) {
+            let { start, end } = link.range;
+            while (start.y > 1 && start.x === textEdge(start.y, false)) {
+              const up = (await rowLinks(start.y - 1)).find((l) => l.text === link.text && l.range.end.x === textEdge(start.y - 1, true));
+              if (!up) break;
+              start = up.range.start;
+            }
+            while (end.x === textEdge(end.y, true)) {
+              const down = (await rowLinks(end.y + 1)).find((l) => l.text === link.text && l.range.start.x === textEdge(end.y + 1, false));
+              if (!down) break;
+              end = down.range.end;
+            }
+            link.range = { start, end };
+          }
+          callback(links.length ? links : void 0);
+        }
+      };
+    }
     // Make vault-relative file paths in the output clickable (open the note in Obsidian).
     // xterm calls provideLinks lazily, per-line, only when the mouse hovers that row — no
     // cost during output. We only link a path that resolves to a real file in the vault,
