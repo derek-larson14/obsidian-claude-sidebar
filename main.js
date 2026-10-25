@@ -9016,14 +9016,17 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     }
     if (migrated) await this.saveData(this.pluginData);
     this.lastActiveTerminalLeaf = null;
+    this.lastActiveEditorLeaf = null;
     this.layoutReady = false;
     this.app.workspace.onLayoutReady(() => { this.layoutReady = true; });
 
-    // Track the most recently focused Claude tab
+    // Track the most recently focused Claude tab and note
     this.registerEvent(
       this.app.workspace.on('active-leaf-change', (leaf) => {
         if (leaf && leaf.view instanceof TerminalView) {
           this.lastActiveTerminalLeaf = leaf;
+        } else if (leaf && leaf.view.getViewType() === "markdown") {
+          this.lastActiveEditorLeaf = leaf;
         }
       })
     );
@@ -9315,10 +9318,13 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   async toggleFocus() {
     const activeView = this.app.workspace.getActiveViewOfType(TerminalView);
     if (activeView) {
-      // Currently in Claude, go to editor — prefer most recent non-pinned leaf
+      // Currently in Claude, go to editor — prefer last-active note, then first non-pinned leaf
       const leaves = this.app.workspace.getLeavesOfType("markdown");
       const unpinned = leaves.filter(l => !l.pinned);
-      const target = unpinned.length > 0 ? unpinned[0] : leaves[0];
+      let target = unpinned.length > 0 ? unpinned[0] : leaves[0];
+      if (this.lastActiveEditorLeaf && leaves.includes(this.lastActiveEditorLeaf)) {
+        target = this.lastActiveEditorLeaf;
+      }
       if (target) {
         this.app.workspace.setActiveLeaf(target, { focus: true });
       }
