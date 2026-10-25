@@ -8138,7 +8138,7 @@ var TerminalView = class extends import_obsidian.ItemView {
           }
           return false;
         }
-        // Cmd+Arrow: readline shortcuts for line navigation
+        // Cmd+Arrow / Cmd+Backspace: readline shortcuts for line navigation and editing
         if (ev.metaKey) {
           if (ev.key === 'ArrowRight') {
             this.proc?.stdin?.write('\x05'); // Ctrl+E = end of line
@@ -8146,6 +8146,14 @@ var TerminalView = class extends import_obsidian.ItemView {
           }
           if (ev.key === 'ArrowLeft') {
             this.proc?.stdin?.write('\x01'); // Ctrl+A = start of line
+            return false;
+          }
+          if (ev.key === 'Backspace') {
+            this.proc?.stdin?.write('\x15'); // Ctrl+U = delete to start of line
+            return false;
+          }
+          if (ev.key === 'Delete') {
+            this.proc?.stdin?.write('\x0b'); // Ctrl+K = delete to end of line
             return false;
           }
         }
