@@ -8138,6 +8138,16 @@ var TerminalView = class extends import_obsidian.ItemView {
           }
           return false;
         }
+        // Ctrl+Backspace: delete the previous word, like native Linux terminals.
+        // xterm sends \b (Ctrl+H) for it, which shells and agent CLIs treat as a plain
+        // backspace. Linux only: macOS already has Option+Backspace, and Windows is
+        // untested (a bare cmd.exe prompt may not treat Ctrl+W as word delete).
+        if (ev.key === 'Backspace' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey &&
+            process.platform === 'linux') {
+          ev.preventDefault();
+          this.proc?.stdin?.write('\x17'); // Ctrl+W = delete word backward
+          return false;
+        }
         // Cmd+Arrow / Cmd+Backspace: readline shortcuts for line navigation and editing
         if (ev.metaKey) {
           if (ev.key === 'ArrowRight') {
