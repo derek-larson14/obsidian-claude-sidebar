@@ -7597,14 +7597,17 @@ var TerminalView = class extends import_obsidian.ItemView {
     fs.writeFileSync(tempPath, buffer);
     return tempPath;
   }
-  // Save an image to a temp file and type its quoted path into the agent's input.
+  // Save an image to a temp file and paste its quoted path into the agent's input.
   // Shared by every paste entry point so images always land the same way.
   async insertImageBlob(blob) {
     try {
       const imagePath = await this.saveImageToTemp(blob);
-      // Insert the path into the terminal input (quoted for paths with spaces)
+      // Insert the path into the terminal input (quoted for paths with spaces).
+      // Sent as a paste rather than as keystrokes: a CLI that attaches pasted image
+      // paths (Claude Code, OpenCode) then shows "[Image #1]" like a native terminal.
+      // Anything else receives the same text as before.
       if (this.proc && !this.proc.killed) {
-        this.proc.stdin?.write(`"${this.plugin.getPath(imagePath)}" `);
+        this.term?.paste(`"${this.plugin.getPath(imagePath)}" `);
       }
     } catch (err) {
       this.term?.writeln(`\r\n[Image paste error: ${err.message}]`);
