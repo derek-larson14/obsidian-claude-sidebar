@@ -7597,7 +7597,19 @@ var TerminalView = class extends import_obsidian.ItemView {
     fs.writeFileSync(tempPath, buffer);
     return tempPath;
   }
-  // Save an image to a temp file and paste its quoted path into the agent's input.
+  // Paste a file path into the agent's input the way a native terminal does for a drop:
+  // backslash-escaped, as a bracketed paste. Claude Code and OpenCode then attach image
+  // files as [Image #N]. Not quoted: Claude Code fails to attach a quoted path holding
+  // the U+202F narrow space macOS puts before "AM"/"PM" in screenshot names.
+  // Native Windows shells keep the quoted form, since backslash is the path separator there.
+  pastePath(rawPath) {
+    if (!this.proc || this.proc.killed) return;
+    const p = this.plugin.getPath(rawPath);
+    const winNative = process.platform === "win32" && this.plugin.resolveShell().kind !== "wsl";
+    const text = winNative ? `"${p}"` : p.replace(/([^\w\/.,:+@%=\-\u0080-￿])/g, "\\$1");
+    this.term?.paste(`${text} `);
+  }
+  // Save an image to a temp file and paste its path into the agent's input.
   // Shared by every paste entry point so images always land the same way.
   async insertImageBlob(blob) {
     try {
@@ -7607,7 +7619,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       // paths (Claude Code, OpenCode) then shows "[Image #1]" like a native terminal.
       // Anything else receives the same text as before.
       if (this.proc && !this.proc.killed) {
-        this.term?.paste(`"${this.plugin.getPath(imagePath)}" `);
+        this.pastePath(imagePath);
       }
     } catch (err) {
       this.term?.writeln(`\r\n[Image paste error: ${err.message}]`);
@@ -7874,7 +7886,8 @@ var TerminalView = class extends import_obsidian.ItemView {
       if (paths.length) {
         e.preventDefault();
         e.stopPropagation();
-        for (const p of paths) this.proc?.stdin?.write(`"${this.plugin.getPath(p)}" `);
+        // Sent as a paste, like insertImageBlob, so Claude Code attaches a copied image file
+        for (const p of paths) this.pastePath(p);
         return;
       }
       for (const item of items || []) {
@@ -7915,7 +7928,7 @@ var TerminalView = class extends import_obsidian.ItemView {
           if (filePath) {
             const decodedPath = decodeURIComponent(filePath);
             const absolutePath = this.app.vault.adapter.getFullPath(decodedPath);
-            this.proc.stdin?.write(`"${this.plugin.getPath(absolutePath)}" `);
+            this.pastePath(absolutePath);
             return;
           }
         } catch (err) {
@@ -7929,7 +7942,8 @@ var TerminalView = class extends import_obsidian.ItemView {
         for (const file of files) {
           const filePath = webUtils.getPathForFile(file);
           if (filePath) {
-            this.proc.stdin?.write(`"${this.plugin.getPath(filePath)}" `);
+            // Sent as a paste, as a native terminal does for a drop, so Claude Code attaches images
+            this.pastePath(filePath);
           }
         }
       }
