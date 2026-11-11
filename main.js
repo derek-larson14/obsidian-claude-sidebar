@@ -8121,9 +8121,17 @@ var TerminalView = class extends import_obsidian.ItemView {
         // Windows Ctrl+V: paste from clipboard (Obsidian intercepts this before xterm sees it)
         if (ev.key === 'v' && ev.ctrlKey && !ev.shiftKey && !ev.altKey && !ev.metaKey) {
           ev.preventDefault();
+          // No text, so the clipboard may hold an image. preventDefault() above suppresses
+          // the `paste` event, so imagePasteHandler never runs - read it from the system
+          // clipboard instead, as Ctrl+Shift+V does.
+          const pasteImage = () => {
+            const image = this.imageInClipboard();
+            if (image) this.pasteImageFromClipboard(image);
+          };
           navigator.clipboard.readText().then((text) => {
             if (text) this.term.paste(text);
-          }).catch(() => {});
+            else pasteImage();
+          }).catch(pasteImage);
           return false;
         }
         // Windows Ctrl+C: copy selection or send interrupt
