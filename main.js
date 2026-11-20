@@ -6928,6 +6928,9 @@ var CLI_BACKENDS = {
     yoloFlag: "--dangerously-skip-permissions",
     resumeFlag: "--continue",
     resumeIsSubcommand: false,
+    // Each tab gets its own session ID, so a restored tab reopens its own conversation.
+    sessionIdFlag: "--session-id",
+    resumeIdFlag: "--resume",
   },
   codex: {
     label: "Codex",
@@ -7148,8 +7151,13 @@ var TerminalView = class extends import_obsidian.ItemView {
       const key = RENAMED_BACKENDS[state.backendKey] || state.backendKey;
       if (this.plugin.getBackends()[key]) this.backendKey = key;
     }
+    if (typeof state?.sessionId === "string" && /^[0-9a-f-]{36}$/i.test(state.sessionId)) {
+      this.sessionId = state.sessionId;
+    }
     // If shell already started, restart with new settings
     if (this.proc && (state?.workingDir || state?.yoloMode || state?.continueSession || state?.backendKey)) {
+      // A restart into a new folder or provider is a new conversation.
+      if (!state.sessionId) this.sessionId = null;
       this.startShell(this.workingDir, this.yoloMode, this.continueSession);
     }
   }
@@ -7159,6 +7167,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     if (this.yoloMode) state.yoloMode = this.yoloMode;
     // Persisted so a one-off provider tab comes back as that provider on restore
     if (this.backendKey) state.backendKey = this.backendKey;
+    // Persisted so the tab resumes its own conversation after a restart
+    if (this.sessionId) state.sessionId = this.sessionId;
     // Don't persist continueSession — it's a one-time action
     return state;
   }
@@ -8479,6 +8489,32 @@ var TerminalView = class extends import_obsidian.ItemView {
     const additionalFlags = flagsByProvider[backendKey] || null;
     if (additionalFlags) cliCmd += " " + additionalFlags;
     let baseCmd = cliCmd;
+    // Per-tab session: start with a known ID, resume that ID when the tab comes back.
+    // Skipped when the user's flags already pick a session, and on Windows, which
+    // builds its own launch command below.
+    let fallbackCmd = continueSession ? baseCmd : null;
+    let followSession = false;
+    const flagsPickSession = /(^|\s)(--session-id|--resume|-r|--continue|-c|--fork-session)(\s|=|$)/.test(additionalFlags || "");
+    if (!isWindows && !continueSession && backend.sessionIdFlag && !flagsPickSession) {
+      // Two tabs sharing one ID (e.g. a duplicated tab) would both write to the
+      // same conversation; give the newer one its own.
+      const sharedWithLiveTab = this.sessionId && [...(this.plugin._trackedTerminalViews || [])].some(
+        (v) => v !== this && v.sessionId === this.sessionId && v.proc && !v.proc.killed
+      );
+      if (this.sessionId && !sharedWithLiveTab) {
+        // The conversation may not exist yet (nothing was typed); the CLI exits
+        // non-zero and we start fresh under the same ID.
+        fallbackCmd = `${baseCmd} ${backend.sessionIdFlag} ${this.sessionId}`;
+        cliCmd += ` ${backend.resumeIdFlag} ${this.sessionId}`;
+      } else {
+        this.sessionId = require("crypto").randomUUID();
+        cliCmd += ` ${backend.sessionIdFlag} ${this.sessionId}`;
+      }
+      this.app.workspace.requestSaveLayout?.();
+      followSession = true;
+    } else if (!continueSession) {
+      this.sessionId = null;
+    }
     if (continueSession && backend.resumeFlag) {
       if (backend.resumeIsSubcommand) {
         // e.g. "codex resume --last" — replace the whole command
@@ -8537,8 +8573,8 @@ var TerminalView = class extends import_obsidian.ItemView {
     }
     const shellCmd = !cliFound
       ? `exec $SHELL -i`
-      : continueSession
-        ? `${cliCmd} || ${baseCmd} || true; exec $SHELL -i`
+      : fallbackCmd
+        ? `${cliCmd} || ${fallbackCmd} || true; exec $SHELL -i`
         : `${cliCmd} || true; exec $SHELL -i`;
     let args = isWindows
       ? [ptyPath, String(cols), String(rows), shell]
@@ -8552,6 +8588,7 @@ var TerminalView = class extends import_obsidian.ItemView {
       // stopShell() can signal the whole tree via -pid in one call.
       detached: !isWindows
     });
+    if (followSession) this.followClaudeSession(shellEnv.CLAUDE_CONFIG_DIR);
     // Use StringDecoder to properly handle UTF-8 boundaries across chunks
     // This prevents replacement characters when multi-byte chars are split
     this.stdoutDecoder = new StringDecoder("utf8");
@@ -8630,7 +8667,44 @@ var TerminalView = class extends import_obsidian.ItemView {
       }, 1000);
     }
   }
+  // /resume and /clear move the CLI to another conversation. Claude Code keeps
+  // <config>/sessions/<pid>.json pointing at the current one; poll it so the
+  // saved tab state follows, and a restart reopens what was last on screen.
+  followClaudeSession(configDir) {
+    this.stopFollowingClaudeSession();
+    const dir = path.join(configDir || path.join(require("os").homedir(), ".claude"), "sessions");
+    let pidFile = null;
+    const readId = (file) => {
+      try {
+        const id = JSON.parse(fs.readFileSync(path.join(dir, file), "utf8")).sessionId;
+        return typeof id === "string" && /^[0-9a-f-]{36}$/i.test(id) ? id : null;
+      } catch (_) {
+        return null;
+      }
+    };
+    this._sessionPoll = setInterval(() => {
+      if (!this.proc || this.proc.killed) return this.stopFollowingClaudeSession();
+      if (!pidFile) {
+        // Not known yet: find the process file that started on our ID.
+        let files = [];
+        try { files = fs.readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)); } catch (_) {}
+        pidFile = files.find((f) => readId(f) === this.sessionId) || null;
+        return;
+      }
+      const id = readId(pidFile);
+      if (!id) return this.stopFollowingClaudeSession(); // CLI exited; keep the last conversation
+      if (id !== this.sessionId) {
+        this.sessionId = id;
+        this.app.workspace.requestSaveLayout?.();
+      }
+    }, 5000);
+  }
+  stopFollowingClaudeSession() {
+    if (this._sessionPoll) clearInterval(this._sessionPoll);
+    this._sessionPoll = null;
+  }
   stopShell() {
+    this.stopFollowingClaudeSession();
     const p = this.proc;
     if (p && !p.killed) {
       const pid = p.pid;
