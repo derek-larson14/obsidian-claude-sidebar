@@ -8998,6 +8998,19 @@ var ClaudeSidebarSettingsTab = class extends import_obsidian.PluginSettingTab {
             this.plugin.applyFontSizeToOpenTerminals(n);
           });
       });
+    new import_obsidian.Setting(containerEl)
+      .setName("Open new terminals in")
+      .setDesc("Where new agent tabs open. Tabs that are already open stay where they are.")
+      .addDropdown(drop => {
+        drop
+          .addOption("sidebar", "Right sidebar")
+          .addOption("main", "Main area")
+          .setValue(this.plugin.pluginData.terminalLocation === "main" ? "main" : "sidebar")
+          .onChange(async (value) => {
+            this.plugin.pluginData.terminalLocation = value;
+            await this.plugin.saveData(this.plugin.pluginData);
+          });
+      });
   }
 };
 var VaultTerminalPlugin = class extends import_obsidian.Plugin {
@@ -9570,7 +9583,9 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   }
   async createNewTab(workingDir = null, yoloMode = false, continueSession = false, backendKey = null) {
     if (!this.layoutReady) return;
-    const leaf = this.app.workspace.getRightLeaf(false);
+    const leaf = this.pluginData.terminalLocation === "main"
+      ? this.app.workspace.getLeaf("tab")
+      : this.app.workspace.getRightLeaf(false);
     if (leaf) {
       const state = {};
       if (workingDir) state.workingDir = workingDir;
