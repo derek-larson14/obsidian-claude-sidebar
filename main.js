@@ -9068,6 +9068,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
       this.app.workspace.on('active-leaf-change', (leaf) => {
         if (leaf && leaf.view instanceof TerminalView) {
           this.lastActiveTerminalLeaf = leaf;
+          this.rememberTerminalLocation(leaf);
         } else if (leaf && leaf.view.getViewType() === "markdown") {
           this.lastActiveEditorLeaf = leaf;
         }
@@ -9091,6 +9092,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
             this._trackedTerminalViews.delete(view);
             try { view.dispose(); } catch (_) {}
           }
+        }
+        // A terminal dragged between the sidebar and the main area moves where
+        // new tabs open.
+        if (this.lastActiveTerminalLeaf?.view instanceof TerminalView) {
+          this.rememberTerminalLocation(this.lastActiveTerminalLeaf);
         }
       })
     );
@@ -9570,7 +9576,7 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
   }
   async createNewTab(workingDir = null, yoloMode = false, continueSession = false, backendKey = null) {
     if (!this.layoutReady) return;
-    const leaf = this.app.workspace.getRightLeaf(false);
+    const leaf = this.getNewTerminalLeaf();
     if (leaf) {
       const state = {};
       if (workingDir) state.workingDir = workingDir;
@@ -9591,6 +9597,33 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
         }
       }, 50);
     }
+  }
+  // Saved like lastCwd, so new tabs still open in the main area after the last
+  // terminal there is closed or Obsidian restarts. Left sidebar and popout
+  // windows aren't remembered; with nothing open, those fall back to the last
+  // remembered spot.
+  rememberTerminalLocation(leaf) {
+    const root = leaf.getRoot?.();
+    const location = root === this.app.workspace.rightSplit ? "sidebar"
+      : root === this.app.workspace.rootSplit ? "main"
+      : null;
+    if (!location || location === (this.pluginData.lastTerminalLocation || "sidebar")) return;
+    this.pluginData.lastTerminalLocation = location;
+    this.saveData(this.pluginData);
+  }
+  // New tabs open where the last terminal was: next to it if one is still open,
+  // otherwise in the remembered area. The right sidebar keeps its old path.
+  getNewTerminalLeaf() {
+    const workspace = this.app.workspace;
+    const open = workspace.getLeavesOfType(VIEW_TYPE);
+    const ref = open.includes(this.lastActiveTerminalLeaf) ? this.lastActiveTerminalLeaf : open[0];
+    if (ref && ref.getRoot?.() !== workspace.rightSplit) {
+      const siblings = ref.parent?.children;
+      const index = siblings ? siblings.indexOf(ref) : -1;
+      if (index >= 0) return workspace.createLeafInParent(ref.parent, index + 1);
+    }
+    if (!ref && this.pluginData.lastTerminalLocation === "main") return workspace.getLeaf("tab");
+    return workspace.getRightLeaf(false);
   }
   buildSelectionContext(editor, selection) {
     const file = this.app.workspace.getActiveFile();
