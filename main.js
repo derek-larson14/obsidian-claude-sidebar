@@ -9483,11 +9483,11 @@ var VaultTerminalPlugin = class extends import_obsidian.Plugin {
     try {
       if (process.platform === "win32") {
         const psOut = (0, import_child_process.execSync)(
-          `powershell.exe -NoProfile -NonInteractive -Command "[Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`,
+          `powershell.exe -NoProfile -NonInteractive -Command "[Console]::OutputEncoding=[System.Text.Encoding]::UTF8; [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"`,
           { encoding: "utf8", timeout: 5000, windowsHide: true }
         );
         const freshPath = psOut.trim();
-        if (freshPath) resolved = freshPath;
+        if (freshPath && !freshPath.includes("\uFFFD")) resolved = freshPath;
       } else {
         const shell = this.resolveShell().binary;
         const out = (0, import_child_process.execSync)(
